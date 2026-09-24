@@ -500,6 +500,10 @@
       return;
     }
     setStatus('查詢中...', false, true);
+    // 沒同步過的標的，後端會即時抓 TWSE/FinMind 再計算，比較久
+    const slowHint = setTimeout(() => {
+      setStatus(`第一次查詢 ${escapeHtml(stockId)}，正在即時抓取證交所資料並計算，約需 10–30 秒...`, false, true);
+    }, 1500);
     searchBtn.disabled = true;
     toolbar.style.display = 'none';
     resultArea.innerHTML = '';
@@ -532,6 +536,7 @@
       setStatus('連線失敗，請確認後端 API 是否啟動', true);
       renderEmpty('無法連線到後端服務');
     } finally {
+      clearTimeout(slowHint);
       searchBtn.disabled = false;
     }
   }

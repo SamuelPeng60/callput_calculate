@@ -9,7 +9,7 @@
  *   php console.php sync-price 2330 2026-06-01
  *   php console.php import-quotes 2026-09-18 quotes.csv
  *   php console.php calculate 2330 2026-09-18
- *   php console.php sync-real 2330 2026-09-23   (抓真實資料 TWSE+FinMind，並直接計算)
+ *   php console.php sync-real 2330 [2026-09-23]   (抓真實資料 TWSE+FinMind 並計算；不帶日期=最近交易日)
  *   php console.php seed-demo         (灌測試用模擬資料，不需要網路)
  */
 
@@ -59,7 +59,7 @@ switch ($command) {
     case 'sync-real':
         (new SyncReal())->handle(
             $args[0] ?? throw new InvalidArgumentException('需要股票代碼'),
-            $args[1] ?? throw new InvalidArgumentException('需要交易日 (Y-m-d)')
+            $args[1] ?? null
         );
         break;
 

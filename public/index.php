@@ -5,7 +5,8 @@
  *
  * GET /api/warrants?stock_id=2330[&trade_date=2026-09-18]
  *   -> 回傳該標的股全部權證 + 合理價 + 標籤
- *   不帶 trade_date 時，自動取該標的最新一筆有計算結果的交易日
+ *   不帶 trade_date 時，自動取該標的最新一筆有計算結果的交易日；
+ *   完全沒資料的標的會當場跑 SyncReal (TWSE + FinMind) 再回傳
  *
  * 本機測試用內建伺服器啟動:
  *   php -S 127.0.0.1:8000 -t public
@@ -13,6 +14,7 @@
 
 require __DIR__ . '/../bootstrap.php';
 
+use App\Console\SyncReal;
 use App\Models\WarrantDailyMetric;
 
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
@@ -42,9 +44,33 @@ if ($path === '/api/warrants' || $path === '/api/warrants/') {
         jsonError(400, '請帶入 stock_id 參數，例如 ?stock_id=2330');
     }
 
+    $stockId = strtoupper(trim($stockId));
+    if (!preg_match('/^[0-9A-Z]{4,6}$/', $stockId)) {
+        jsonError(400, '股票代號格式不正確');
+    }
+
     $tradeDate = $_GET['trade_date'] ?? WarrantDailyMetric::latestTradeDate($stockId);
+
+    // 沒同步過的標的 -> 當場抓最近交易日的真實資料並計算 (第一次查約 10~30 秒)
+    if (!$tradeDate && !isset($_GET['trade_date'])) {
+        set_time_limit(300);
+        ob_start(); // SyncReal 是 CLI 指令，會 echo 進度，這裡不要混進 JSON
+        try {
+            (new SyncReal())->handle($stockId);
+            $log = ob_get_clean();
+        } catch (Throwable $e) {
+            ob_end_clean();
+            jsonError(502, "即時抓取 {$stockId} 資料失敗：" . $e->getMessage());
+        }
+        $tradeDate = WarrantDailyMetric::latestTradeDate($stockId);
+        if (!$tradeDate) {
+            $lines = explode("\n", trim($log));
+            jsonError(404, "{$stockId} 目前沒有可分析的上市權證 (" . end($lines) . ')');
+        }
+    }
+
     if (!$tradeDate) {
-        jsonError(404, "找不到 {$stockId} 的任何計算結果，請確認是否已執行過 calculate 指令。");
+        jsonError(404, "找不到 {$stockId} 在 {$_GET['trade_date']} 的計算結果。");
     }
 
     $rows = WarrantDailyMetric::listForStock($stockId, $tradeDate);

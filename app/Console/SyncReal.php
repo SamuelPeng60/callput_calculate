@@ -2,6 +2,7 @@
 
 namespace App\Console;
 
+use App\Models\PriceSnapshot;
 use App\Models\UnderlyingStock;
 use App\Models\Warrant;
 use App\Models\WarrantQuote;
@@ -15,7 +16,8 @@ use App\Support\Database;
  *   3. FinMind 日線(免費) -> 標的歷史股價(算 HV)
  *   4. calculate
  *
- * CLI: php console.php sync-real 2330 2026-09-23
+ * CLI: php console.php sync-real 2330 [2026-09-23]   (不帶日期 = 最近一個交易日)
+ * API 查到沒同步過的標的時也會直接呼叫這支。
  */
 class SyncReal
 {
@@ -23,9 +25,11 @@ class SyncReal
     {
     }
 
-    public function handle(string $stockId, string $tradeDate): int
+    public function handle(string $stockId, ?string $tradeDate = null): int
     {
         ini_set('memory_limit', '1G'); // 權證基本資料 JSON 約 40MB
+
+        $tradeDate ??= $this->twse->latestTradeDate();
 
         echo "抓取 TWSE {$tradeDate} 權證收盤行情...\n";
         $quotes = array_filter(
@@ -77,6 +81,11 @@ class SyncReal
         // HV 需要回看 HV_LOOKBACK_DAYS 個交易日，抓半年前開始的日線就夠
         $start = date('Y-m-d', strtotime($tradeDate . ' -180 days'));
         (new SyncUnderlyingPrice())->handle($stockId, $start);
+
+        // FinMind 當天資料可能比 TWSE 晚更新，缺當天收盤就用 MI_INDEX 附的標的收盤價
+        if (PriceSnapshot::closeOn($stockId, $tradeDate) === null && $first['underlying_close'] !== null) {
+            PriceSnapshot::upsert($stockId, $tradeDate, $first['underlying_close']);
+        }
 
         return (new CalculateMetrics())->handle($stockId, $tradeDate);
     }
