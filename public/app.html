@@ -299,6 +299,30 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
+  .pager {
+    display: flex;
+    gap: 4px;
+    justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 12px;
+  }
+  .pager button {
+    min-width: 34px;
+    padding: 6px 10px;
+    font-size: 12.5px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+  }
+  .pager button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .pager button.active { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); font-weight: 600; }
+  .pager button:disabled { opacity: 0.4; cursor: default; }
+  .pager .gap { color: var(--text-dim); padding: 0 4px; }
+  .pager .range { color: var(--text-dim); font-size: 12.5px; margin-left: 8px; }
+
   footer { margin-top: 20px; font-size: 12px; color: var(--text-dim); text-align: center; }
 
   @media (max-width: 640px) {
@@ -388,11 +412,14 @@
   let rawWarrants = [];
   let currentMeta = null;
   let filters = { type: 'all', label: 'all', issuer: 'all', minDays: 0 };
-  let sortKey = 'deviation_pct';
-  let sortDir = 'desc'; // desc = 偏貴優先
+  let sortKey = 'label';
+  let sortDir = 'asc'; // asc = 合理優先
+  let page = 1;
 
+  const PAGE_SIZE = 100;
   const MATURITY_DANGER_DAYS = 30; // 剩餘天數 < 這個值 -> 紅色警示(時間價值加速衰退)
   const MATURITY_WARN_DAYS = 60;   // 剩餘天數 < 這個值(但 >= 危險值) -> 提醒(已進入加速衰退區)
+  const RECOMMENDED_DAYS = 120;    // 同標籤內，剩餘天數 >= 這個值的排前面
 
   const QUICK_STOCKS = [
     { id: '2330', name: '台積電' },
@@ -486,6 +513,7 @@
       setStatus(`${data.stock_id}　資料日期：${data.trade_date}　共 ${data.count} 檔權證`, false);
       populateIssuerFilter(rawWarrants);
       toolbar.style.display = 'flex';
+      page = 1;
       renderTable();
     } catch (e) {
       setStatus('連線失敗，請確認後端 API 是否啟動', true);
@@ -524,8 +552,9 @@
     rows.sort((a, b) => {
       let av = a[sortKey], bv = b[sortKey];
       if (sortKey === 'label') {
-        const order = { expensive: 0, cheap: 1, fair: 2, unknown: 3 };
+        const order = { fair: 0, cheap: 1, expensive: 2, unknown: 3 };
         av = order[av] ?? 9; bv = order[bv] ?? 9;
+        if (av === bv) return recommendCompare(a, b);
       }
       if (av === null || av === undefined) av = sortDir === 'asc' ? Infinity : -Infinity;
       if (bv === null || bv === undefined) bv = sortDir === 'asc' ? Infinity : -Infinity;
@@ -538,14 +567,29 @@
     return rows;
   }
 
-  function renderTable() {
-    const rows = applyFiltersAndSort();
-    countBadge.textContent = `顯示 ${rows.length} / ${rawWarrants.length} 檔`;
+  // 同標籤內的推薦順序：剩餘天數 >= 120 天優先，再依偏離% 絕對值由小到大
+  function recommendCompare(a, b) {
+    const ar = (a.days_to_maturity ?? 0) >= RECOMMENDED_DAYS ? 0 : 1;
+    const br = (b.days_to_maturity ?? 0) >= RECOMMENDED_DAYS ? 0 : 1;
+    if (ar !== br) return ar - br;
+    const ad = a.deviation_pct == null ? Infinity : Math.abs(a.deviation_pct);
+    const bd = b.deviation_pct == null ? Infinity : Math.abs(b.deviation_pct);
+    return ad - bd;
+  }
 
-    if (rows.length === 0) {
+  function renderTable() {
+    const allRows = applyFiltersAndSort();
+    countBadge.textContent = `顯示 ${allRows.length} / ${rawWarrants.length} 檔`;
+
+    if (allRows.length === 0) {
       renderEmpty('沒有符合篩選條件的權證');
       return;
     }
+
+    const totalPages = Math.ceil(allRows.length / PAGE_SIZE);
+    page = Math.min(Math.max(page, 1), totalPages);
+    const start = (page - 1) * PAGE_SIZE;
+    const rows = allRows.slice(start, start + PAGE_SIZE);
 
     const thead = `<thead><tr>${COLUMNS.map(c => {
       const arrow = sortKey === c.key ? `<span class="arrow">${sortDir === 'asc' ? '▲' : '▼'}</span>` : '';
@@ -554,7 +598,11 @@
 
     const tbody = `<tbody>${rows.map(rowHtml).join('')}</tbody>`;
 
-    resultArea.innerHTML = `<div class="table-scroll"><table>${thead}${tbody}</table></div>`;
+    const pager = totalPages > 1
+      ? pagerHtml(totalPages, start + 1, start + rows.length, allRows.length)
+      : '';
+
+    resultArea.innerHTML = `<div class="table-scroll"><table>${thead}${tbody}</table></div>${pager}`;
 
     resultArea.querySelectorAll('thead th').forEach(th => {
       th.addEventListener('click', () => {
@@ -563,11 +611,41 @@
           sortDir = sortDir === 'asc' ? 'desc' : 'asc';
         } else {
           sortKey = key;
-          sortDir = 'desc';
+          sortDir = key === 'label' ? 'asc' : 'desc';
         }
+        page = 1;
         renderTable();
       });
     });
+
+    resultArea.querySelectorAll('.pager button[data-page]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        page = Number(btn.dataset.page);
+        renderTable();
+        resultArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    });
+  }
+
+  function pagerHtml(totalPages, from, to, total) {
+    // 顯示：第一頁、最後一頁、目前頁前後各 2 頁，其餘用 … 省略
+    const pages = [];
+    for (let p = 1; p <= totalPages; p++) {
+      if (p === 1 || p === totalPages || Math.abs(p - page) <= 2) {
+        pages.push(p);
+      } else if (pages[pages.length - 1] !== '…') {
+        pages.push('…');
+      }
+    }
+    const btn = (p, text, disabled) =>
+      `<button data-page="${p}"${disabled ? ' disabled' : ''}${p === page && !text ? ' class="active"' : ''}>${text || p}</button>`;
+
+    return `<div class="pager">
+      ${btn(page - 1, '‹ 上一頁', page === 1)}
+      ${pages.map(p => p === '…' ? '<span class="gap">…</span>' : btn(p)).join('')}
+      ${btn(page + 1, '下一頁 ›', page === totalPages)}
+      <span class="range">第 ${from}–${to} 筆，共 ${total} 筆</span>
+    </div>`;
   }
 
   function rowHtml(w) {
@@ -615,6 +693,7 @@
         container.querySelectorAll('button').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         filters[filterKey] = btn.dataset.val;
+        page = 1;
         renderTable();
       });
     });
@@ -623,6 +702,7 @@
   bindSeg(labelFilterEl, 'label');
   issuerFilterEl.addEventListener('change', () => {
     filters.issuer = issuerFilterEl.value;
+    page = 1;
     renderTable();
   });
 
@@ -632,6 +712,7 @@
       btn.classList.add('active');
       filters.minDays = Number(btn.dataset.val);
       daysCustomInput.value = '';
+      page = 1;
       renderTable();
     });
   });
@@ -642,6 +723,7 @@
     if (!daysCustomInput.value) {
       daysFilterEl.querySelector('button[data-val="0"]').classList.add('active');
     }
+    page = 1;
     renderTable();
   });
 
