@@ -461,6 +461,7 @@
     { key: 'effective_leverage', label: '實質槓桿', sortable: true, fmt: v => v == null ? '—' : fmtNum(v, 2) + 'x' },
     { key: 'spread_ratio_pct', label: '價差比', sortable: true, fmt: v => fmtPct(v) },
     { key: 'theta', label: 'Theta/日', sortable: true, fmt: v => v == null ? '—' : fmtNum(v, 4) },
+    { key: 'decay_pct', label: '衰減%/日', sortable: true },
     { key: 'deviation_pct', label: '偏離%', sortable: true, fmt: v => fmtPct(v, true) },
     { key: 'label', label: '判斷', sortable: true },
   ];
@@ -487,6 +488,13 @@
       return `<span class="maturity-warn">${days} 天<span class="maturity-tag">加速衰退區</span></span>`;
     }
     return `${days} 天`;
+  }
+
+  // 每日時間價值衰減% = |Theta(每交易日)| / 權證價格；價格用委買價(同實質槓桿)，沒有就用收盤價
+  function decayPct(w) {
+    const price = w.bid_price || w.warrant_close;
+    if (w.theta == null || !price) return null;
+    return Math.abs(w.theta) / price * 100;
   }
 
   function isRiskRow(w) {
@@ -518,7 +526,7 @@
         return;
       }
 
-      rawWarrants = data.warrants || [];
+      rawWarrants = (data.warrants || []).map(w => ({ ...w, decay_pct: decayPct(w) }));
       currentMeta = data;
 
       if (rawWarrants.length === 0) {
@@ -693,6 +701,7 @@
       <td>${w.effective_leverage == null ? '—' : fmtNum(w.effective_leverage, 2) + 'x'}</td>
       <td>${fmtPct(w.spread_ratio_pct)}</td>
       <td>${w.theta == null ? '—' : fmtNum(w.theta, 4)}</td>
+      <td>${w.decay_pct == null ? '—' : fmtNum(w.decay_pct, 2) + '%'}</td>
       <td>${fmtPct(w.deviation_pct, true)}</td>
       <td>
         <span class="label-badge ${labelClass}">${labelZh(w.label)}</span>
