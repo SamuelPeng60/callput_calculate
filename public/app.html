@@ -378,6 +378,17 @@
       </div>
       <input type="number" id="daysCustomInput" placeholder="自訂天數" min="0" style="width:84px;">
     </div>
+    <div class="group">
+      <label>成交量</label>
+      <div class="seg" id="volumeFilter">
+        <button data-val="0" class="active">全部</button>
+        <button data-val="1">有成交</button>
+        <button data-val="10000">≥10張</button>
+        <button data-val="100000">≥100張</button>
+        <button data-val="500000">≥500張</button>
+      </div>
+      <input type="number" id="volumeCustomInput" placeholder="自訂張數" min="0" style="width:84px;">
+    </div>
     <div class="spacer"></div>
     <div class="count-badge" id="countBadge"></div>
   </div>
@@ -408,10 +419,12 @@
 
   const daysFilterEl = document.getElementById('daysFilter');
   const daysCustomInput = document.getElementById('daysCustomInput');
+  const volumeFilterEl = document.getElementById('volumeFilter');
+  const volumeCustomInput = document.getElementById('volumeCustomInput');
 
   let rawWarrants = [];
   let currentMeta = null;
-  let filters = { type: 'all', label: 'all', issuer: 'all', minDays: 0 };
+  let filters = { type: 'all', label: 'all', issuer: 'all', minDays: 0, minVolume: 0 }; // minVolume 單位: 股(1張=1000)
   let sortKey = 'label';
   let sortDir = 'asc'; // asc = 合理優先
   let page = 1;
@@ -419,7 +432,6 @@
   const PAGE_SIZE = 100;
   const MATURITY_DANGER_DAYS = 30; // 剩餘天數 < 這個值 -> 紅色警示(時間價值加速衰退)
   const MATURITY_WARN_DAYS = 60;   // 剩餘天數 < 這個值(但 >= 危險值) -> 提醒(已進入加速衰退區)
-  const RECOMMENDED_DAYS = 120;    // 同標籤內，剩餘天數 >= 這個值的排前面
 
   const QUICK_STOCKS = [
     { id: '2330', name: '台積電' },
@@ -444,6 +456,7 @@
     { key: 'exercise_ratio', label: '行使比例', sortable: true, fmt: v => fmtNum(v, 3) },
     { key: 'bid_price', label: '委買價', sortable: true, fmt: v => fmtNum(v, 3) },
     { key: 'ask_price', label: '委賣價', sortable: true, fmt: v => fmtNum(v, 3) },
+    { key: 'volume', label: '成交量(張)', sortable: true },
     { key: 'biv_pct', label: 'BIV', sortable: true, fmt: v => fmtPct(v) },
     { key: 'effective_leverage', label: '實質槓桿', sortable: true, fmt: v => v == null ? '—' : fmtNum(v, 2) + 'x' },
     { key: 'spread_ratio_pct', label: '價差比', sortable: true, fmt: v => fmtPct(v) },
@@ -546,6 +559,7 @@
       if (filters.label !== 'all' && w.label !== filters.label) return false;
       if (filters.issuer !== 'all' && w.issuer !== filters.issuer) return false;
       if (filters.minDays > 0 && (w.days_to_maturity === null || w.days_to_maturity < filters.minDays)) return false;
+      if (filters.minVolume > 0 && (w.volume ?? 0) < filters.minVolume) return false;
       return true;
     });
 
@@ -567,11 +581,10 @@
     return rows;
   }
 
-  // 同標籤內的推薦順序：剩餘天數 >= 120 天優先，再依偏離% 絕對值由小到大
+  // 同標籤內的推薦順序：成交量由大到小，同量再依偏離% 絕對值由小到大
   function recommendCompare(a, b) {
-    const ar = (a.days_to_maturity ?? 0) >= RECOMMENDED_DAYS ? 0 : 1;
-    const br = (b.days_to_maturity ?? 0) >= RECOMMENDED_DAYS ? 0 : 1;
-    if (ar !== br) return ar - br;
+    const vd = (b.volume ?? 0) - (a.volume ?? 0);
+    if (vd !== 0) return vd;
     const ad = a.deviation_pct == null ? Infinity : Math.abs(a.deviation_pct);
     const bd = b.deviation_pct == null ? Infinity : Math.abs(b.deviation_pct);
     return ad - bd;
@@ -670,6 +683,7 @@
       <td>${fmtNum(w.exercise_ratio, 3)}</td>
       <td>${fmtNum(w.bid_price, 3)}</td>
       <td>${fmtNum(w.ask_price, 3)}</td>
+      <td>${w.volume == null ? '—' : fmtNum(w.volume / 1000, 0)}</td>
       <td>${fmtPct(w.biv_pct)}</td>
       <td>${w.effective_leverage == null ? '—' : fmtNum(w.effective_leverage, 2) + 'x'}</td>
       <td>${fmtPct(w.spread_ratio_pct)}</td>
@@ -706,26 +720,31 @@
     renderTable();
   });
 
-  daysFilterEl.querySelectorAll('button').forEach(btn => {
-    btn.addEventListener('click', () => {
-      daysFilterEl.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      filters.minDays = Number(btn.dataset.val);
-      daysCustomInput.value = '';
+  // 門檻型篩選(按鈕 + 自訂輸入)，自訂輸入值 * multiplier 後存進 filters[filterKey]
+  function bindThreshold(container, customInput, filterKey, multiplier) {
+    container.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        container.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        filters[filterKey] = Number(btn.dataset.val);
+        customInput.value = '';
+        page = 1;
+        renderTable();
+      });
+    });
+    customInput.addEventListener('input', () => {
+      const v = Number(customInput.value);
+      container.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+      filters[filterKey] = v > 0 ? v * multiplier : 0;
+      if (!customInput.value) {
+        container.querySelector('button[data-val="0"]').classList.add('active');
+      }
       page = 1;
       renderTable();
     });
-  });
-  daysCustomInput.addEventListener('input', () => {
-    const v = Number(daysCustomInput.value);
-    daysFilterEl.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-    filters.minDays = v > 0 ? v : 0;
-    if (!daysCustomInput.value) {
-      daysFilterEl.querySelector('button[data-val="0"]').classList.add('active');
-    }
-    page = 1;
-    renderTable();
-  });
+  }
+  bindThreshold(daysFilterEl, daysCustomInput, 'minDays', 1);
+  bindThreshold(volumeFilterEl, volumeCustomInput, 'minVolume', 1000); // 自訂輸入單位: 張
 
   searchBtn.addEventListener('click', runSearch);
   stockInput.addEventListener('keydown', e => { if (e.key === 'Enter') runSearch(); });
