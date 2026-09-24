@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>權證分析工具</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --panel: #ffffff;
+    --border: #e3e5e9;
+    --text: #1c1f24;
+    --text-dim: #6b7280;
+    --accent: #2563eb;
+    --accent-dim: #eef2ff;
+
+    --cheap-bg: #e8f7ee;
+    --cheap-fg: #0d8a4f;
+    --cheap-border: #b8e8cc;
+
+    --fair-bg: #f1f2f4;
+    --fair-fg: #555b66;
+    --fair-border: #dcdfe4;
+
+    --expensive-bg: #fdecec;
+    --expensive-fg: #c22a2a;
+    --expensive-border: #f5c2c2;
+
+    --call-fg: #b7472a;
+    --put-fg: #1a7a8a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14161a;
+      --panel: #1c1f25;
+      --border: #2b2f37;
+      --text: #e8e9ec;
+      --text-dim: #9aa1ab;
+      --accent: #5b8def;
+      --accent-dim: #1c2540;
+
+      --cheap-bg: #123324;
+      --cheap-fg: #4ade80;
+      --cheap-border: #1f4d36;
+
+      --fair-bg: #24262b;
+      --fair-fg: #b6bbc3;
+      --fair-border: #34373d;
+
+      --expensive-bg: #3a1a1a;
+      --expensive-fg: #f87171;
+      --expensive-border: #5c2626;
+
+      --call-fg: #e08a6f;
+      --put-fg: #5fc7d6;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14161a;
+    --panel: #1c1f25;
+    --border: #2b2f37;
+    --text: #e8e9ec;
+    --text-dim: #9aa1ab;
+    --accent: #5b8def;
+    --accent-dim: #1c2540;
+    --cheap-bg: #123324;
+    --cheap-fg: #4ade80;
+    --cheap-border: #1f4d36;
+    --fair-bg: #24262b;
+    --fair-fg: #b6bbc3;
+    --fair-border: #34373d;
+    --expensive-bg: #3a1a1a;
+    --expensive-fg: #f87171;
+    --expensive-border: #5c2626;
+    --call-fg: #e08a6f;
+    --put-fg: #5fc7d6;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Noto Sans TC", sans-serif;
+    font-size: 14px;
+  }
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 20px 16px 60px; }
+
+  header { margin-bottom: 16px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .subtitle { color: var(--text-dim); font-size: 13px; }
+
+  .search-bar {
+    display: flex;
+    gap: 8px;
+    margin: 16px 0;
+    flex-wrap: wrap;
+  }
+  .search-bar input[type="text"] {
+    flex: 1;
+    min-width: 180px;
+    padding: 10px 14px;
+    font-size: 15px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--text);
+  }
+  .search-bar input[type="text"]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .search-bar button {
+    padding: 10px 20px;
+    font-size: 15px;
+    border: none;
+    border-radius: 8px;
+    background: var(--accent);
+    color: white;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .search-bar button:hover { opacity: 0.9; }
+  .search-bar button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .quick-picks { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+  .quick-picks button {
+    padding: 5px 12px;
+    font-size: 12.5px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--panel);
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .quick-picks button:hover { border-color: var(--accent); color: var(--accent); }
+
+  .status-line {
+    color: var(--text-dim);
+    font-size: 13px;
+    margin: 4px 0 14px;
+    min-height: 18px;
+  }
+  .status-line.error { color: var(--expensive-fg); }
+
+  .toolbar {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .toolbar .group { display: flex; gap: 4px; align-items: center; }
+  .toolbar label { color: var(--text-dim); font-size: 12.5px; margin-right: 2px; }
+  .seg { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button {
+    padding: 6px 12px;
+    font-size: 12.5px;
+    border: none;
+    background: var(--panel);
+    color: var(--text-dim);
+    cursor: pointer;
+    border-right: 1px solid var(--border);
+  }
+  .seg button:last-child { border-right: none; }
+  .seg button.active { background: var(--accent-dim); color: var(--accent); font-weight: 600; }
+  .toolbar select {
+    padding: 6px 10px;
+    font-size: 12.5px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--text);
+  }
+  .toolbar .spacer { flex: 1; }
+  .count-badge { font-size: 12.5px; color: var(--text-dim); }
+  .toolbar input[type="number"] {
+    padding: 6px 8px;
+    font-size: 12.5px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--text);
+  }
+  .rec-dot {
+    display: inline-block;
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+    margin-left: 4px;
+    vertical-align: 2px;
+  }
+  .hint-line {
+    font-size: 11.5px;
+    color: var(--text-dim);
+    margin: -6px 0 12px 2px;
+    line-height: 1.6;
+  }
+  .hint-dot {
+    display: inline-block;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    margin-right: 3px;
+    vertical-align: 1px;
+  }
+  .hint-dot.rec { background: var(--accent); }
+  .hint-dot.danger { background: var(--expensive-fg); margin-left: 10px; }
+
+  .table-scroll {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--panel);
+  }
+  table { border-collapse: collapse; width: 100%; min-width: 980px; }
+  thead th {
+    position: sticky; top: 0;
+    background: var(--panel);
+    text-align: right;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+  }
+  thead th:hover { color: var(--accent); }
+  thead th.left { text-align: left; }
+  thead th .arrow { font-size: 10px; margin-left: 2px; opacity: 0.6; }
+
+  tbody td {
+    padding: 10px 12px;
+    text-align: right;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  tbody td.left { text-align: left; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--accent-dim); }
+  tbody tr.row-danger { border-left: 3px solid var(--expensive-fg); }
+  tbody tr.row-danger td:first-child { padding-left: 9px; }
+
+  .maturity-danger { color: var(--expensive-fg); font-weight: 700; }
+  .maturity-warn { color: #b8860b; font-weight: 600; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .maturity-warn { color: #d4a72c; }
+  }
+  :root[data-theme="dark"] .maturity-warn { color: #d4a72c; }
+  .maturity-tag {
+    font-size: 10.5px;
+    margin-left: 4px;
+    opacity: 0.85;
+  }
+
+  .wname { font-weight: 600; }
+  .wcode { color: var(--text-dim); font-size: 12px; }
+  .type-tag { font-size: 11.5px; font-weight: 700; padding: 2px 6px; border-radius: 4px; }
+  .type-call { color: var(--call-fg); background: color-mix(in srgb, var(--call-fg) 12%, transparent); }
+  .type-put { color: var(--put-fg); background: color-mix(in srgb, var(--put-fg) 12%, transparent); }
+
+  .label-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12.5px;
+    font-weight: 700;
+    border: 1px solid transparent;
+    white-space: nowrap;
+  }
+  .label-cheap { background: var(--cheap-bg); color: var(--cheap-fg); border-color: var(--cheap-border); }
+  .label-fair { background: var(--fair-bg); color: var(--fair-fg); border-color: var(--fair-border); }
+  .label-expensive { background: var(--expensive-bg); color: var(--expensive-fg); border-color: var(--expensive-border); }
+  .label-unknown { background: var(--fair-bg); color: var(--text-dim); border-color: var(--fair-border); }
+
+  .fair-price-line { font-size: 11.5px; color: var(--text-dim); margin-top: 2px; }
+
+  .empty-state, .loading-state {
+    padding: 60px 20px;
+    text-align: center;
+    color: var(--text-dim);
+  }
+  .empty-state .big { font-size: 15px; color: var(--text); margin-bottom: 6px; }
+
+  .spinner {
+    display: inline-block;
+    width: 16px; height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    vertical-align: -3px;
+    margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  footer { margin-top: 20px; font-size: 12px; color: var(--text-dim); text-align: center; }
+
+  @media (max-width: 640px) {
+    .wrap { padding: 14px 10px 40px; }
+    h1 { font-size: 17px; }
+    table { min-width: 820px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>台股權證分析</h1>
+    <div class="subtitle">輸入標的股票代號，列出全部權證並標示合理 / 偏貴 / 便宜</div>
+  </header>
+
+  <div class="search-bar">
+    <input type="text" id="stockInput" placeholder="輸入股票代號，例如 2330" autocomplete="off" inputmode="numeric">
+    <button id="searchBtn">查詢</button>
+  </div>
+  <div class="quick-picks" id="quickPicks"></div>
+  <div class="status-line" id="statusLine"></div>
+
+  <div id="toolbar" class="toolbar" style="display:none;">
+    <div class="group">
+      <label>類型</label>
+      <div class="seg" id="typeFilter">
+        <button data-val="all" class="active">全部</button>
+        <button data-val="call">認購</button>
+        <button data-val="put">認售</button>
+      </div>
+    </div>
+    <div class="group">
+      <label>標籤</label>
+      <div class="seg" id="labelFilter">
+        <button data-val="all" class="active">全部</button>
+        <button data-val="cheap">便宜</button>
+        <button data-val="fair">合理</button>
+        <button data-val="expensive">偏貴</button>
+      </div>
+    </div>
+    <div class="group">
+      <label>發行商</label>
+      <select id="issuerFilter"><option value="all">全部</option></select>
+    </div>
+    <div class="group">
+      <label>剩餘天數</label>
+      <div class="seg" id="daysFilter">
+        <button data-val="0" class="active">全部</button>
+        <button data-val="90">≥90天</button>
+        <button data-val="120">≥120天<span class="rec-dot" title="建議門檻：時間價值耗損速度較平緩"></span></button>
+        <button data-val="180">≥180天</button>
+      </div>
+      <input type="number" id="daysCustomInput" placeholder="自訂天數" min="0" style="width:84px;">
+    </div>
+    <div class="spacer"></div>
+    <div class="count-badge" id="countBadge"></div>
+  </div>
+  <div class="hint-line">
+    <span class="hint-dot rec"></span> 券商篩選器常見下限為60天，但耗損速度仍偏快；建議以120天以上為門檻，時間價值耗損速度會更平緩。
+    <span class="hint-dot danger"></span> 剩餘天數 &lt; 30 天：時間價值加速衰退、價差可能擴大，表格內以紅色警示。
+  </div>
+
+  <div id="resultArea"></div>
+
+  <footer>合理價為程式依委買隱含波動率(BIV)同組中位數估算之參考值，非官方揭露數據，僅供研究參考，不構成投資建議。</footer>
+</div>
+
+<script>
+(function () {
+  const API_BASE = ''; // 同源；若前後端分開部署，改成 'https://your-api-host'
+
+  const stockInput = document.getElementById('stockInput');
+  const searchBtn = document.getElementById('searchBtn');
+  const statusLine = document.getElementById('statusLine');
+  const resultArea = document.getElementById('resultArea');
+  const toolbar = document.getElementById('toolbar');
+  const typeFilterEl = document.getElementById('typeFilter');
+  const labelFilterEl = document.getElementById('labelFilter');
+  const issuerFilterEl = document.getElementById('issuerFilter');
+  const countBadge = document.getElementById('countBadge');
+  const quickPicks = document.getElementById('quickPicks');
+
+  const daysFilterEl = document.getElementById('daysFilter');
+  const daysCustomInput = document.getElementById('daysCustomInput');
+
+  let rawWarrants = [];
+  let currentMeta = null;
+  let filters = { type: 'all', label: 'all', issuer: 'all', minDays: 0 };
+  let sortKey = 'deviation_pct';
+  let sortDir = 'desc'; // desc = 偏貴優先
+
+  const MATURITY_DANGER_DAYS = 30; // 剩餘天數 < 這個值 -> 紅色警示(時間價值加速衰退)
+  const MATURITY_WARN_DAYS = 60;   // 剩餘天數 < 這個值(但 >= 危險值) -> 提醒(已進入加速衰退區)
+
+  const QUICK_STOCKS = [
+    { id: '2330', name: '台積電' },
+    { id: '2317', name: '鴻海' },
+    { id: '2454', name: '聯發科' },
+    { id: '2603', name: '長榮' },
+    { id: '3008', name: '大立光' },
+  ];
+  QUICK_STOCKS.forEach(s => {
+    const btn = document.createElement('button');
+    btn.textContent = `${s.id} ${s.name}`;
+    btn.addEventListener('click', () => { stockInput.value = s.id; runSearch(); });
+    quickPicks.appendChild(btn);
+  });
+
+  const COLUMNS = [
+    { key: 'warrant_id', label: '權證', align: 'left', sortable: true },
+    { key: 'issuer', label: '發行商', align: 'left', sortable: true },
+    { key: 'type', label: '認購/售', sortable: true },
+    { key: 'strike_price', label: '履約價', sortable: true, fmt: v => fmtNum(v, 2) },
+    { key: 'days_to_maturity', label: '剩餘天數', sortable: true, fmt: fmtDays },
+    { key: 'exercise_ratio', label: '行使比例', sortable: true, fmt: v => fmtNum(v, 3) },
+    { key: 'bid_price', label: '委買價', sortable: true, fmt: v => fmtNum(v, 3) },
+    { key: 'ask_price', label: '委賣價', sortable: true, fmt: v => fmtNum(v, 3) },
+    { key: 'biv_pct', label: 'BIV', sortable: true, fmt: v => fmtPct(v) },
+    { key: 'effective_leverage', label: '實質槓桿', sortable: true, fmt: v => v == null ? '—' : fmtNum(v, 2) + 'x' },
+    { key: 'spread_ratio_pct', label: '價差比', sortable: true, fmt: v => fmtPct(v) },
+    { key: 'theta', label: 'Theta/日', sortable: true, fmt: v => v == null ? '—' : fmtNum(v, 4) },
+    { key: 'deviation_pct', label: '偏離%', sortable: true, fmt: v => fmtPct(v, true) },
+    { key: 'label', label: '判斷', sortable: true },
+  ];
+
+  function fmtNum(v, digits) {
+    if (v === null || v === undefined) return '—';
+    return Number(v).toLocaleString('zh-TW', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  }
+  function fmtPct(v, signed) {
+    if (v === null || v === undefined) return '—';
+    const sign = signed && v > 0 ? '+' : '';
+    return `${sign}${fmtNum(v, 1)}%`;
+  }
+  function labelZh(l) {
+    return { cheap: '便宜', fair: '合理', expensive: '偏貴', unknown: '資料不足' }[l] || l;
+  }
+
+  function fmtDays(days) {
+    if (days === null || days === undefined) return '—';
+    if (days < MATURITY_DANGER_DAYS) {
+      return `<span class="maturity-danger">${days} 天<span class="maturity-tag">⚠即將到期</span></span>`;
+    }
+    if (days < MATURITY_WARN_DAYS) {
+      return `<span class="maturity-warn">${days} 天<span class="maturity-tag">加速衰退區</span></span>`;
+    }
+    return `${days} 天`;
+  }
+
+  function isRiskRow(w) {
+    return w.label === 'expensive' || (w.days_to_maturity !== null && w.days_to_maturity < MATURITY_DANGER_DAYS);
+  }
+
+  async function runSearch() {
+    const stockId = stockInput.value.trim();
+    if (!stockId) {
+      setStatus('請輸入股票代號', true);
+      return;
+    }
+    setStatus('查詢中...', false, true);
+    searchBtn.disabled = true;
+    toolbar.style.display = 'none';
+    resultArea.innerHTML = '';
+
+    try {
+      const res = await fetch(`${API_BASE}/api/warrants?stock_id=${encodeURIComponent(stockId)}`);
+      const data = await res.json();
+
+      if (!res.ok) {
+        setStatus(data.error || `查詢失敗 (HTTP ${res.status})`, true);
+        renderEmpty(data.error || '查無資料');
+        return;
+      }
+
+      rawWarrants = data.warrants || [];
+      currentMeta = data;
+
+      if (rawWarrants.length === 0) {
+        setStatus(`${data.stock_id} 在 ${data.trade_date} 沒有權證資料`, false);
+        renderEmpty('這檔股票目前沒有找到對應的權證資料');
+        return;
+      }
+
+      setStatus(`${data.stock_id}　資料日期：${data.trade_date}　共 ${data.count} 檔權證`, false);
+      populateIssuerFilter(rawWarrants);
+      toolbar.style.display = 'flex';
+      renderTable();
+    } catch (e) {
+      setStatus('連線失敗，請確認後端 API 是否啟動', true);
+      renderEmpty('無法連線到後端服務');
+    } finally {
+      searchBtn.disabled = false;
+    }
+  }
+
+  function setStatus(text, isError, loading) {
+    statusLine.className = 'status-line' + (isError ? ' error' : '');
+    statusLine.innerHTML = (loading ? '<span class="spinner"></span>' : '') + text;
+  }
+
+  function populateIssuerFilter(warrants) {
+    const issuers = Array.from(new Set(warrants.map(w => w.issuer).filter(Boolean))).sort();
+    issuerFilterEl.innerHTML = '<option value="all">全部</option>' +
+      issuers.map(i => `<option value="${escapeHtml(i)}">${escapeHtml(i)}</option>`).join('');
+    issuerFilterEl.value = 'all';
+    filters.issuer = 'all';
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function applyFiltersAndSort() {
+    let rows = rawWarrants.filter(w => {
+      if (filters.type !== 'all' && w.type !== filters.type) return false;
+      if (filters.label !== 'all' && w.label !== filters.label) return false;
+      if (filters.issuer !== 'all' && w.issuer !== filters.issuer) return false;
+      if (filters.minDays > 0 && (w.days_to_maturity === null || w.days_to_maturity < filters.minDays)) return false;
+      return true;
+    });
+
+    rows.sort((a, b) => {
+      let av = a[sortKey], bv = b[sortKey];
+      if (sortKey === 'label') {
+        const order = { expensive: 0, cheap: 1, fair: 2, unknown: 3 };
+        av = order[av] ?? 9; bv = order[bv] ?? 9;
+      }
+      if (av === null || av === undefined) av = sortDir === 'asc' ? Infinity : -Infinity;
+      if (bv === null || bv === undefined) bv = sortDir === 'asc' ? Infinity : -Infinity;
+      if (typeof av === 'string') {
+        return sortDir === 'asc' ? String(av).localeCompare(bv) : String(bv).localeCompare(av);
+      }
+      return sortDir === 'asc' ? av - bv : bv - av;
+    });
+
+    return rows;
+  }
+
+  function renderTable() {
+    const rows = applyFiltersAndSort();
+    countBadge.textContent = `顯示 ${rows.length} / ${rawWarrants.length} 檔`;
+
+    if (rows.length === 0) {
+      renderEmpty('沒有符合篩選條件的權證');
+      return;
+    }
+
+    const thead = `<thead><tr>${COLUMNS.map(c => {
+      const arrow = sortKey === c.key ? `<span class="arrow">${sortDir === 'asc' ? '▲' : '▼'}</span>` : '';
+      return `<th class="${c.align === 'left' ? 'left' : ''}" data-key="${c.key}">${c.label}${arrow}</th>`;
+    }).join('')}</tr></thead>`;
+
+    const tbody = `<tbody>${rows.map(rowHtml).join('')}</tbody>`;
+
+    resultArea.innerHTML = `<div class="table-scroll"><table>${thead}${tbody}</table></div>`;
+
+    resultArea.querySelectorAll('thead th').forEach(th => {
+      th.addEventListener('click', () => {
+        const key = th.dataset.key;
+        if (sortKey === key) {
+          sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+          sortKey = key;
+          sortDir = 'desc';
+        }
+        renderTable();
+      });
+    });
+  }
+
+  function rowHtml(w) {
+    const typeTagClass = w.type === 'call' ? 'type-call' : 'type-put';
+    const labelClass = `label-${w.label}`;
+    let fairLine = '';
+    if ((w.label === 'expensive' || w.label === 'cheap') && w.fair_price !== null) {
+      fairLine = `<div class="fair-price-line">合理價 ${fmtNum(w.fair_price, 3)}</div>`;
+    }
+
+    const rowClass = isRiskRow(w) ? ' class="row-danger"' : '';
+
+    return `<tr${rowClass}>
+      <td class="left">
+        <div class="wname">${escapeHtml(w.warrant_id)}</div>
+        <div class="wcode">${escapeHtml(w.name || '')}</div>
+      </td>
+      <td class="left">${escapeHtml(w.issuer || '—')}</td>
+      <td><span class="type-tag ${typeTagClass}">${w.type_label}</span></td>
+      <td>${fmtNum(w.strike_price, 2)}</td>
+      <td>${fmtDays(w.days_to_maturity)}</td>
+      <td>${fmtNum(w.exercise_ratio, 3)}</td>
+      <td>${fmtNum(w.bid_price, 3)}</td>
+      <td>${fmtNum(w.ask_price, 3)}</td>
+      <td>${fmtPct(w.biv_pct)}</td>
+      <td>${w.effective_leverage == null ? '—' : fmtNum(w.effective_leverage, 2) + 'x'}</td>
+      <td>${fmtPct(w.spread_ratio_pct)}</td>
+      <td>${w.theta == null ? '—' : fmtNum(w.theta, 4)}</td>
+      <td>${fmtPct(w.deviation_pct, true)}</td>
+      <td>
+        <span class="label-badge ${labelClass}">${labelZh(w.label)}</span>
+        ${fairLine}
+      </td>
+    </tr>`;
+  }
+
+  function renderEmpty(msg) {
+    resultArea.innerHTML = `<div class="empty-state"><div class="big">${escapeHtml(msg)}</div></div>`;
+  }
+
+  // 篩選器事件
+  function bindSeg(container, filterKey) {
+    container.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        container.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        filters[filterKey] = btn.dataset.val;
+        renderTable();
+      });
+    });
+  }
+  bindSeg(typeFilterEl, 'type');
+  bindSeg(labelFilterEl, 'label');
+  issuerFilterEl.addEventListener('change', () => {
+    filters.issuer = issuerFilterEl.value;
+    renderTable();
+  });
+
+  daysFilterEl.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      daysFilterEl.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      filters.minDays = Number(btn.dataset.val);
+      daysCustomInput.value = '';
+      renderTable();
+    });
+  });
+  daysCustomInput.addEventListener('input', () => {
+    const v = Number(daysCustomInput.value);
+    daysFilterEl.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+    filters.minDays = v > 0 ? v : 0;
+    if (!daysCustomInput.value) {
+      daysFilterEl.querySelector('button[data-val="0"]').classList.add('active');
+    }
+    renderTable();
+  });
+
+  searchBtn.addEventListener('click', runSearch);
+  stockInput.addEventListener('keydown', e => { if (e.key === 'Enter') runSearch(); });
+
+  // 頁面載入時自動查一次示範股票
+  stockInput.value = '2330';
+  runSearch();
+})();
+</script>
+</body>
+</html>
