@@ -87,14 +87,21 @@ php -S 127.0.0.1:8000 -t public
 ## 真實資料 (一行指令，免費資料源)
 
 ```bash
-php console.php sync-real 2330 2026-09-23
+php console.php sync-real 2330               # 不帶日期 = 最近一個交易日
+php console.php sync-real 8299 2026-09-24    # 上櫃也可以
 ```
 
-- 權證報價(委買/委賣/收盤)：TWSE `MI_INDEX` 每日收盤行情(收盤後約 15:00 後公布)
-- 權證條件(履約價/行使比例/到期日)：TWSE OpenAPI `t187ap37_L`，約 40MB，每天快取一次在 `storage/cache/`
-- 標的歷史股價(算 HV)：FinMind `TaiwanStockPrice`(免費等級可用)
-- 抓完自動跑 `calculate`
-- 限制：只有**上市**權證(上櫃 TPEx 權證未接)；牛熊證跳過
+網頁/API 查到沒同步過的股票時會自動跑這支(第一次約 5~30 秒)。
+
+| 資料 | 上市 (TWSE) | 上櫃 (TPEx) |
+|---|---|---|
+| 權證報價(委買/委賣/收盤) | `MI_INDEX` type=0999/0999P | `stk_wn1430` se=AL |
+| 權證 -> 標的代號 | `MI_INDEX` 內含 | OpenAPI `tpex_warrant_daily_quts` |
+| 履約價/行使比例/到期日 | OpenAPI `t187ap37_L` (~40MB) | OpenAPI `mopsfin_t187ap37_O` (~15MB) |
+
+- 標的歷史股價(算 HV)：FinMind `TaiwanStockPrice`(免費等級可用，上市上櫃都有)
+- 以上都快取在 `storage/cache/`(行情依日期、基本資料每天一份)，抓完自動跑 `calculate`
+- 收盤行情約 15:00 後公布；牛熊證跳過
 - Windows 上 PHP 需要啟用 `pdo_sqlite`、`mbstring`、`curl`、`openssl` 擴充
 
 FinMind 的 `TaiwanStockInfoWithWarrantSummary`(下面 `sync-warrants` 用的)需要付費等級，免費會回 400。

@@ -6,7 +6,7 @@
  * GET /api/warrants?stock_id=2330[&trade_date=2026-09-18]
  *   -> 回傳該標的股全部權證 + 合理價 + 標籤
  *   不帶 trade_date 時，自動取該標的最新一筆有計算結果的交易日；
- *   完全沒資料的標的會當場跑 SyncReal (TWSE + FinMind) 再回傳
+ *   完全沒資料的標的會當場跑 SyncReal (TWSE/TPEx + FinMind) 再回傳
  *
  * 本機測試用內建伺服器啟動:
  *   php -S 127.0.0.1:8000 -t public
@@ -65,7 +65,7 @@ if ($path === '/api/warrants' || $path === '/api/warrants/') {
         $tradeDate = WarrantDailyMetric::latestTradeDate($stockId);
         if (!$tradeDate) {
             $lines = explode("\n", trim($log));
-            jsonError(404, "{$stockId} 目前沒有可分析的上市權證 (" . end($lines) . ')');
+            jsonError(404, "{$stockId} 目前沒有可分析的權證 (" . end($lines) . ')');
         }
     }
 

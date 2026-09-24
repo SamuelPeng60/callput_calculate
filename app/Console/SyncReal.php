@@ -6,14 +6,15 @@ use App\Models\PriceSnapshot;
 use App\Models\UnderlyingStock;
 use App\Models\Warrant;
 use App\Models\WarrantQuote;
+use App\Services\TpexClient;
 use App\Services\TwseClient;
 use App\Support\Database;
 
 /**
  * 用免費公開資料把某標的「真實」的權證資料灌進資料庫，然後跑計算:
- *   1. TWSE MI_INDEX      -> 當天全部上市權證報價(委買/委賣/收盤)，篩出這個標的的
- *   2. TWSE t187ap37_L    -> 這些權證的履約價/行使比例/到期日
- *   3. FinMind 日線(免費) -> 標的歷史股價(算 HV)
+ *   1. TWSE MI_INDEX + TPEx 收盤行情 -> 當天上市/上櫃權證報價(委買/委賣/收盤)，篩出這個標的的
+ *   2. TWSE / TPEx 權證基本資料       -> 履約價/行使比例/到期日
+ *   3. FinMind 日線(免費)             -> 標的歷史股價(算 HV)
  *   4. calculate
  *
  * CLI: php console.php sync-real 2330 [2026-09-23]   (不帶日期 = 最近一個交易日)
@@ -21,8 +22,10 @@ use App\Support\Database;
  */
 class SyncReal
 {
-    public function __construct(private TwseClient $twse = new TwseClient())
-    {
+    public function __construct(
+        private TwseClient $twse = new TwseClient(),
+        private TpexClient $tpex = new TpexClient(),
+    ) {
     }
 
     public function handle(string $stockId, ?string $tradeDate = null): int
@@ -30,24 +33,26 @@ class SyncReal
         ini_set('memory_limit', '1G'); // 權證基本資料 JSON 約 40MB
 
         $tradeDate ??= $this->twse->latestTradeDate();
+        $ofStock = fn ($q) => $q['underlying_id'] === $stockId;
 
-        echo "抓取 TWSE {$tradeDate} 權證收盤行情...\n";
-        $quotes = array_filter(
-            $this->twse->dailyQuotes($tradeDate),
-            fn ($q) => $q['underlying_id'] === $stockId
-        );
-        if (empty($quotes)) {
-            echo "{$tradeDate} 找不到標的 {$stockId} 的上市權證 (上櫃權證目前尚未支援)。\n";
+        echo "抓取 {$tradeDate} 上市/上櫃權證收盤行情...\n";
+        $twseQuotes = array_filter($this->twse->dailyQuotes($tradeDate), $ofStock);
+        $tpexQuotes = array_filter($this->tpex->dailyQuotes($tradeDate), $ofStock);
+        if (empty($twseQuotes) && empty($tpexQuotes)) {
+            echo "{$tradeDate} 找不到標的 {$stockId} 的上市或上櫃權證。\n";
             return 0;
         }
 
-        $terms = $this->twse->warrantTerms(array_keys($quotes));
+        // 只下載有需要的那個市場的基本資料 (TWSE 那份 40MB)
+        $terms = ($twseQuotes ? $this->twse->warrantTerms(array_keys($twseQuotes)) : [])
+            + ($tpexQuotes ? $this->tpex->warrantTerms(array_keys($tpexQuotes)) : []);
+        $quotes = $twseQuotes + $tpexQuotes;
 
         $pdo = Database::connection();
         $pdo->beginTransaction();
 
         $first = reset($quotes);
-        UnderlyingStock::upsert($stockId, $first['underlying_name'], 'TSE');
+        UnderlyingStock::upsert($stockId, $first['underlying_name'], $twseQuotes ? 'TSE' : 'OTC');
 
         $count = 0;
         $skipped = 0;
@@ -82,9 +87,10 @@ class SyncReal
         $start = date('Y-m-d', strtotime($tradeDate . ' -180 days'));
         (new SyncUnderlyingPrice())->handle($stockId, $start);
 
-        // FinMind 當天資料可能比 TWSE 晚更新，缺當天收盤就用 MI_INDEX 附的標的收盤價
-        if (PriceSnapshot::closeOn($stockId, $tradeDate) === null && $first['underlying_close'] !== null) {
-            PriceSnapshot::upsert($stockId, $tradeDate, $first['underlying_close']);
+        // FinMind 當天資料可能比交易所晚更新，缺當天收盤就用行情資料附的標的收盤價
+        $underlyingClose = current(array_filter(array_column($quotes, 'underlying_close'))) ?: null;
+        if (PriceSnapshot::closeOn($stockId, $tradeDate) === null && $underlyingClose !== null) {
+            PriceSnapshot::upsert($stockId, $tradeDate, $underlyingClose);
         }
 
         return (new CalculateMetrics())->handle($stockId, $tradeDate);
