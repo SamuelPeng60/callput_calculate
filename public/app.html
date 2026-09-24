@@ -244,7 +244,7 @@
   tbody tr.row-danger { border-left: 3px solid var(--expensive-fg); }
   tbody tr.row-danger td:first-child { padding-left: 9px; }
 
-  .maturity-danger { color: var(--expensive-fg); font-weight: 700; }
+  .maturity-danger, .decay-danger { color: var(--expensive-fg); font-weight: 700; }
   .maturity-warn { color: #b8860b; font-weight: 600; }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .maturity-warn { color: #d4a72c; }
@@ -394,7 +394,7 @@
   </div>
   <div class="hint-line">
     <span class="hint-dot rec"></span> 券商篩選器常見下限為60天，但耗損速度仍偏快；建議以120天以上為門檻，時間價值耗損速度會更平緩。
-    <span class="hint-dot danger"></span> 剩餘天數 &lt; 30 天：時間價值加速衰退、價差可能擴大，表格內以紅色警示。
+    <span class="hint-dot danger"></span> 剩餘天數 &lt; 30 天：時間價值加速衰退、價差可能擴大，表格內以紅色警示；每日衰減超過 2% 也以紅字標示。
   </div>
 
   <div id="resultArea"></div>
@@ -432,6 +432,7 @@
   const PAGE_SIZE = 100;
   const MATURITY_DANGER_DAYS = 30; // 剩餘天數 < 這個值 -> 紅色警示(時間價值加速衰退)
   const MATURITY_WARN_DAYS = 60;   // 剩餘天數 < 這個值(但 >= 危險值) -> 提醒(已進入加速衰退區)
+  const DECAY_DANGER_PCT = 2;      // 每日衰減% > 這個值 -> 紅字
 
   const QUICK_STOCKS = [
     { id: '2330', name: '台積電' },
@@ -701,7 +702,7 @@
       <td>${w.effective_leverage == null ? '—' : fmtNum(w.effective_leverage, 2) + 'x'}</td>
       <td>${fmtPct(w.spread_ratio_pct)}</td>
       <td>${w.theta == null ? '—' : fmtNum(w.theta, 4)}</td>
-      <td>${w.decay_pct == null ? '—' : fmtNum(w.decay_pct, 2) + '%'}</td>
+      <td${w.decay_pct > DECAY_DANGER_PCT ? ' class="decay-danger"' : ''}>${w.decay_pct == null ? '—' : fmtNum(w.decay_pct, 2) + '%'}</td>
       <td>${fmtPct(w.deviation_pct, true)}</td>
       <td>
         <span class="label-badge ${labelClass}">${labelZh(w.label)}</span>
