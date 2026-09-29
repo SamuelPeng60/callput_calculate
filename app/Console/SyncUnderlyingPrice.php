@@ -6,7 +6,7 @@ use App\Models\PriceSnapshot;
 use App\Services\FinMindClient;
 
 /**
- * 同步標的股票歷史收盤價(算 HV 用)。同樣需要外部網路，沙盒內無法測試。
+ * 同步標的股票歷史收盤價(算 HV 用)，資料來源 FinMind TaiwanStockPrice (免費等級可用)。
  *   php console.php sync-price 2330 2026-06-01
  */
 class SyncUnderlyingPrice

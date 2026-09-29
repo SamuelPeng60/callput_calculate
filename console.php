@@ -17,6 +17,7 @@ require __DIR__ . '/bootstrap.php';
 
 use App\Console\CalculateMetrics;
 use App\Console\ImportQuotes;
+use App\Console\SyncJob;
 use App\Console\SyncReal;
 use App\Console\SyncUnderlyingPrice;
 use App\Console\SyncWarrants;
@@ -60,6 +61,13 @@ switch ($command) {
         (new SyncReal())->handle(
             $args[0] ?? throw new InvalidArgumentException('需要股票代碼'),
             $args[1] ?? null
+        );
+        break;
+
+    case 'sync-job': // 網頁觸發的背景同步 (會寫 storage/jobs 狀態檔)，一般不用手動跑
+        (new SyncJob())->handle(
+            $args[0] ?? throw new InvalidArgumentException('需要股票代碼'),
+            $args[1] ?? throw new InvalidArgumentException('需要交易日 (Y-m-d)')
         );
         break;
 

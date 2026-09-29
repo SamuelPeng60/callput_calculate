@@ -51,5 +51,18 @@ class Database
         $pdo = self::connection();
         $schema = file_get_contents(dirname(__DIR__, 2) . '/database/schema.sql');
         $pdo->exec($schema);
+
+        // 舊資料庫補欄位 (CREATE TABLE IF NOT EXISTS 不會幫既有的表加欄位)
+        $addColumns = [
+            ['warrant_quotes', 'strike_price', 'REAL'],
+            ['warrant_quotes', 'exercise_ratio', 'REAL'],
+        ];
+        foreach ($addColumns as [$table, $column, $type]) {
+            try {
+                $pdo->exec("ALTER TABLE {$table} ADD COLUMN {$column} {$type}");
+            } catch (\PDOException) {
+                // 欄位已存在
+            }
+        }
     }
 }

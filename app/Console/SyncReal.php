@@ -44,8 +44,8 @@ class SyncReal
         }
 
         // 只下載有需要的那個市場的基本資料 (TWSE 那份 40MB)
-        $terms = ($twseQuotes ? $this->twse->warrantTerms(array_keys($twseQuotes)) : [])
-            + ($tpexQuotes ? $this->tpex->warrantTerms(array_keys($tpexQuotes)) : []);
+        $terms = ($twseQuotes ? $this->twse->warrantTerms(array_keys($twseQuotes), $tradeDate) : [])
+            + ($tpexQuotes ? $this->tpex->warrantTerms(array_keys($tpexQuotes), $tradeDate) : []);
         $quotes = $twseQuotes + $tpexQuotes;
 
         $pdo = Database::connection();
@@ -76,7 +76,7 @@ class SyncReal
                 'fulfillment_method' => $t['fulfillment_method'],
                 'status' => 'active',
             ]);
-            WarrantQuote::upsert($id, $tradeDate, $q['bid'], $q['ask'], $q['close'], $q['volume']);
+            WarrantQuote::upsert($id, $tradeDate, $q['bid'], $q['ask'], $q['close'], $q['volume'], $t['strike_price'], $t['exercise_ratio']);
             $count++;
         }
 

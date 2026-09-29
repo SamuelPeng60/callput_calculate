@@ -9,8 +9,8 @@ use App\Services\FinMindClient;
 /**
  * 同步某標的股票的「全部權證清單」進資料庫。
  *
- * !! 這個指令需要對外連線到 api.finmindtrade.com，在目前沙盒環境無法測試，
- * !! 請搬到你自己有網路的伺服器上執行:
+ * !! 舊流程：FinMind 的 TaiwanStockInfoWithWarrantSummary 需要付費等級，免費會回 400。
+ * !! 平常請用 sync-real (TWSE/TPEx 免費資料)。
  * !!   php console.php sync-warrants 2330
  */
 class SyncWarrants

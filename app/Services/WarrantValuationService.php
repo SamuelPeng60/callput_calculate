@@ -77,7 +77,7 @@ class WarrantValuationService
 
             $sigmaForGreeks = $row['biv'] ?? $row['close_iv'] ?? $hv ?? 0.4;
             $row['delta'] = BlackScholes::delta($w['type'], $S, $w['strike_price'], $T, $this->riskFreeRate, $this->dividendYield, $sigmaForGreeks, $w['exercise_ratio']);
-            $row['theta'] = BlackScholes::theta($w['type'], $S, $w['strike_price'], $T, $this->riskFreeRate, $this->dividendYield, $sigmaForGreeks, $w['exercise_ratio']);
+            $row['theta'] = BlackScholes::theta($w['type'], $S, $w['strike_price'], $T, $this->riskFreeRate, $this->dividendYield, $sigmaForGreeks, $w['exercise_ratio'], $this->tradingDaysPerYear);
 
             $row['theoretical_price'] = $hv !== null
                 ? BlackScholes::price($w['type'], $S, $w['strike_price'], $T, $this->riskFreeRate, $this->dividendYield, $hv, $w['exercise_ratio'])

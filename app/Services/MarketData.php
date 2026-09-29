@@ -34,6 +34,14 @@ class MarketData
         return $body;
     }
 
+    /** 先寫暫存檔再改名：背景同步可能同時有好幾個程序在讀寫同一個快取檔，避免讀到寫一半的 */
+    public static function putFile(string $path, string $data): void
+    {
+        $tmp = $path . '.' . getmypid() . '.tmp';
+        file_put_contents($tmp, $data);
+        rename($tmp, $path);
+    }
+
     public static function cacheDir(): string
     {
         $dir = dirname(__DIR__, 2) . '/storage/cache';
@@ -48,36 +56,88 @@ class MarketData
     {
         $cacheFile = self::cacheDir() . '/' . $cacheName;
         if (!is_file($cacheFile)) {
-            file_put_contents($cacheFile, self::get($url, $timeout));
+            self::putFile($cacheFile, self::get($url, $timeout));
         }
         return file_get_contents($cacheFile);
     }
 
     /**
-     * 權證基本資料彙總表 (TWSE t187ap37_L / TPEx mopsfin_t187ap37_O 同格式)，
-     * 只有「最新一天」的資料，每天快取一次。回傳 [權證代號 => row]
+     * 權證基本資料彙總表 (TWSE t187ap37_L / TPEx mopsfin_t187ap37_O 同格式)。
      *
-     * @param string[]|null $onlyIds 只保留這些代號(省記憶體)
+     * 來源只有「最新一天」的資料，所以每天下載一次、解析後存成精簡快照
+     * ({prefix}_terms_Ymd.json，幾 MB)，累積起來就是每天的條件歷史。
+     * 查過去某個交易日時，用「該日當天或之後最近的一份」快照，
+     * 盡量貼近當時的履約價/行使比例(除權息會調整)；都沒有才退回今天的。
+     *
+     * @param string[]|null $onlyIds 只保留這些代號
      * @return array<string, array{strike_price:float, exercise_ratio:float, maturity_date:string,
      *   listed_type:string, fulfillment_method:string}>
      */
-    public static function warrantTerms(string $url, string $cachePrefix, ?array $onlyIds = null): array
+    public static function warrantTerms(string $url, string $cachePrefix, ?array $onlyIds = null, ?string $asOfDate = null): array
     {
-        $cacheName = $cachePrefix . '_' . date('Ymd') . '.json';
-        if (!is_file(self::cacheDir() . '/' . $cacheName)) {
+        self::convertLegacyTermsCache($cachePrefix);
+
+        $today = date('Ymd');
+        $asOf = $asOfDate === null ? $today : date('Ymd', strtotime($asOfDate));
+        $snapshotDate = self::termsSnapshotDateOnOrAfter($cachePrefix, $asOf) ?? $today;
+
+        $file = self::cacheDir() . "/{$cachePrefix}_terms_{$snapshotDate}.json";
+        if (!is_file($file)) {
             echo "下載權證基本資料 {$cachePrefix} (每天只抓一次)...\n";
+            // TWSE 那份約 40MB，證交所有時只有 ~200KB/s，逾時要給夠
+            $rows = json_decode(self::get($url, 600), true);
+            if (!is_array($rows)) {
+                throw new RuntimeException("權證基本資料格式錯誤 ({$cachePrefix})");
+            }
+            self::putFile($file, json_encode(self::parseTerms($rows), JSON_UNESCAPED_UNICODE));
+            unset($rows);
         }
-        $rows = json_decode(self::cachedGet($cacheName, $url, 180), true);
-        if (!is_array($rows)) {
-            @unlink(self::cacheDir() . '/' . $cacheName);
-            throw new RuntimeException("權證基本資料格式錯誤 ({$cachePrefix})");
+        if ($snapshotDate > $asOf && $snapshotDate === $today) {
+            echo "注意：沒有 {$asOf} 當時的權證條件快照，改用今天的條件(期間若有除權息調整，履約價/行使比例可能不同)。\n";
         }
 
-        $keep = $onlyIds === null ? null : array_flip($onlyIds);
+        $terms = json_decode(file_get_contents($file), true);
+        return $onlyIds === null ? $terms : array_intersect_key($terms, array_flip($onlyIds));
+    }
+
+    /** 已存在的快照中，日期 >= $asOf 的最早一份 (Ymd)；沒有回 null */
+    private static function termsSnapshotDateOnOrAfter(string $cachePrefix, string $asOf): ?string
+    {
+        $dates = [];
+        foreach (glob(self::cacheDir() . "/{$cachePrefix}_terms_*.json") as $f) {
+            if (preg_match('/_terms_(\d{8})\.json$/', $f, $m) && $m[1] >= $asOf) {
+                $dates[] = $m[1];
+            }
+        }
+        return $dates ? min($dates) : null;
+    }
+
+    /** 舊版快取存的是 40MB 原始檔 ({prefix}_Ymd.json)，轉成精簡快照後刪掉 */
+    private static function convertLegacyTermsCache(string $cachePrefix): void
+    {
+        foreach (glob(self::cacheDir() . "/{$cachePrefix}_[0-9]*.json") as $f) {
+            if (!preg_match('/_(\d{8})\.json$/', $f, $m)) {
+                continue;
+            }
+            $rows = json_decode(file_get_contents($f), true);
+            if (is_array($rows)) {
+                self::putFile(
+                    self::cacheDir() . "/{$cachePrefix}_terms_{$m[1]}.json",
+                    json_encode(self::parseTerms($rows), JSON_UNESCAPED_UNICODE)
+                );
+            }
+            unset($rows);
+            unlink($f);
+        }
+    }
+
+    /** 原始彙總表 rows -> [權證代號 => 精簡欄位] */
+    private static function parseTerms(array $rows): array
+    {
         $result = [];
         foreach ($rows as $r) {
             $id = trim($r['權證代號'] ?? '');
-            if ($id === '' || ($keep !== null && !isset($keep[$id]))) {
+            if ($id === '') {
                 continue;
             }
             $result[$id] = [
@@ -89,8 +149,6 @@ class MarketData
                 'fulfillment_method' => (string)($r['結算方式(詳附註編號說明)'] ?? ''),
             ];
         }
-        unset($rows);
-
         return $result;
     }
 

@@ -65,15 +65,22 @@ class TwseClient
 
     /**
      * 從今天往回找，最近一個 TWSE 已公布權證收盤行情的交易日 (Y-m-d)
+     * 結果快取 10 分鐘：網頁每次查詢都會問，今天還沒公布時不要每次都打證交所。
      */
     public function latestTradeDate(int $maxDaysBack = 10): string
     {
+        $cacheFile = MarketData::cacheDir() . '/twse_latest_trade_date.txt';
+        if (is_file($cacheFile) && time() - filemtime($cacheFile) < 600) {
+            return trim(file_get_contents($cacheFile));
+        }
+
         for ($i = 0; $i <= $maxDaysBack; $i++) {
             $date = date('Y-m-d', strtotime("-{$i} days"));
             if (in_array(date('N', strtotime($date)), ['6', '7'], true)) {
                 continue; // 週末不用問
             }
             if ($this->miIndex($date, '0999') !== null) {
+                MarketData::putFile($cacheFile, $date);
                 return $date;
             }
         }
@@ -81,13 +88,13 @@ class TwseClient
     }
 
     /**
-     * 上市權證基本資料(最新)，回傳 [權證代號 => row]
+     * 上市權證基本資料(盡量用 $asOfDate 當時的快照，見 MarketData::warrantTerms)，回傳 [權證代號 => row]
      *
      * @param string[]|null $onlyIds
      */
-    public function warrantTerms(?array $onlyIds = null): array
+    public function warrantTerms(?array $onlyIds = null, ?string $asOfDate = null): array
     {
-        return MarketData::warrantTerms(self::BASIC_URL, 'twse_t187ap37', $onlyIds);
+        return MarketData::warrantTerms(self::BASIC_URL, 'twse_t187ap37', $onlyIds, $asOfDate);
     }
 
     /**
@@ -109,11 +116,13 @@ class TwseClient
         if (!is_array($json)) {
             throw new RuntimeException("TWSE MI_INDEX unexpected response ({$tradeDate})");
         }
-        if (($json['stat'] ?? '') !== 'OK') {
+        // 盤中/收盤前也會回 stat=OK，但權證那張表的 data 是空的 -> 視為尚未公布(也不能快取)
+        $hasData = array_filter($json['tables'] ?? [], fn ($t) => !empty($t['data']));
+        if (($json['stat'] ?? '') !== 'OK' || !$hasData) {
             return null;
         }
 
-        file_put_contents($cacheFile, $body);
+        MarketData::putFile($cacheFile, $body);
         return $json;
     }
 }

@@ -111,7 +111,7 @@ class BlackScholes
     /**
      * Theta (時間價值每日衰減，負值代表每天損失多少價值；已換算成"每一天"而非"每一年")
      */
-    public static function theta(string $type, float $S, float $K, float $T, float $r, float $q, float $sigma, float $exerciseRatio): float
+    public static function theta(string $type, float $S, float $K, float $T, float $r, float $q, float $sigma, float $exerciseRatio, int $tradingDaysPerYear = 240): float
     {
         if ($T <= 0 || $sigma <= 0) {
             return 0.0;
@@ -132,7 +132,7 @@ class BlackScholes
         }
 
         // 換算成日 theta (以年化交易日數換算)
-        return ($thetaPerYear / 240.0) * $exerciseRatio;
+        return ($thetaPerYear / $tradingDaysPerYear) * $exerciseRatio;
     }
 
     /**

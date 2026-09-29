@@ -52,8 +52,9 @@ class CalculateMetrics
             $input[] = [
                 'warrant_id' => $w['warrant_id'],
                 'type' => $w['type'],
-                'strike_price' => (float)$w['strike_price'],
-                'exercise_ratio' => (float)$w['exercise_ratio'],
+                // 報價有記當天的條件就用當天的(除權息調整)，否則用主檔
+                'strike_price' => (float)($q['strike_price'] ?? $w['strike_price']),
+                'exercise_ratio' => (float)($q['exercise_ratio'] ?? $w['exercise_ratio']),
                 'maturity_date' => $w['maturity_date'],
                 'bid_price' => $q['bid_price'] !== null ? (float)$q['bid_price'] : null,
                 'ask_price' => $q['ask_price'] !== null ? (float)$q['ask_price'] : null,

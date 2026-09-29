@@ -60,13 +60,16 @@ class WarrantDailyMetric
     public static function listForStock(string $underlyingStockId, string $tradeDate): array
     {
         $stmt = Database::connection()->prepare(
-            'SELECT w.warrant_id, w.name, w.type, w.issuer, w.strike_price, w.exercise_ratio, w.maturity_date,
+            'SELECT w.warrant_id, w.name, w.type, w.issuer, w.maturity_date,
+                    COALESCE(q.strike_price, w.strike_price) AS strike_price,
+                    COALESCE(q.exercise_ratio, w.exercise_ratio) AS exercise_ratio,
                     m.underlying_close, m.warrant_close, m.bid_price, m.ask_price, m.volume,
                     m.days_to_maturity, m.hv, m.biv, m.siv, m.fair_biv, m.fair_price,
                     m.deviation_pct, m.label, m.delta, m.theta, m.effective_leverage, m.spread_ratio,
                     m.trade_date
              FROM warrants w
              JOIN warrant_daily_metrics m ON m.warrant_id = w.warrant_id
+             LEFT JOIN warrant_quotes q ON q.warrant_id = m.warrant_id AND q.trade_date = m.trade_date
              WHERE w.underlying_stock_id = :sid AND m.trade_date = :d
              ORDER BY w.type, w.strike_price'
         );

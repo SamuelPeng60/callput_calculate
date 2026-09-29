@@ -57,13 +57,13 @@ class TpexClient
     }
 
     /**
-     * 上櫃權證基本資料(最新)，回傳 [權證代號 => row]
+     * 上櫃權證基本資料(盡量用 $asOfDate 當時的快照，見 MarketData::warrantTerms)，回傳 [權證代號 => row]
      *
      * @param string[]|null $onlyIds
      */
-    public function warrantTerms(?array $onlyIds = null): array
+    public function warrantTerms(?array $onlyIds = null, ?string $asOfDate = null): array
     {
-        return MarketData::warrantTerms(self::BASIC_URL, 'tpex_t187ap37', $onlyIds);
+        return MarketData::warrantTerms(self::BASIC_URL, 'tpex_t187ap37', $onlyIds, $asOfDate);
     }
 
     /**
@@ -88,7 +88,7 @@ class TpexClient
             if (empty($json['tables'][0]['data'])) {
                 return null; // 非交易日或尚未公布
             }
-            file_put_contents($cacheFile, $body);
+            MarketData::putFile($cacheFile, $body);
         }
 
         $table = $json['tables'][0];

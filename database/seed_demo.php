@@ -1,9 +1,9 @@
 <?php
 
 /**
- * 灌入模擬資料，不需要對外網路，用來在沙盒環境完整跑一遍
+ * 灌入模擬資料，不需要對外網路，用來離線完整跑一遍
  * migrate -> 有股價/權證/報價 -> calculate -> API 輸出 的流程。
- * 正式環境請改用 sync-warrants / sync-price / import-quotes 抓真實資料。
+ * 真實資料請用 sync-real。
  */
 
 use App\Models\PriceSnapshot;

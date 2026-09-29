@@ -8,11 +8,9 @@ use RuntimeException;
 /**
  * FinMind API 客戶端 - 抓「某標的的全部權證清單」與「標的歷史股價」
  *
- * !! 注意 !!
- * 這個 class 在目前的開發沙盒裡「無法實際連線測試」，因為沙盒的網路政策
- * 擋掉了 api.finmindtrade.com。程式碼是照 FinMind 官方文件的 API 規格寫的
- * (https://finmind.github.io/)，請把整個專案搬到你自己有對外網路的伺服器
- * (例如你的 vmtfn209114)上執行 SyncWarrants 指令時，才會真的打到網路。
+ * 目前 sync-real 只用到 getDailyPrice (TaiwanStockPrice，免費等級可用)；
+ * getWarrantsByUnderlying (TaiwanStockInfoWithWarrantSummary) 需要付費等級，
+ * 只有舊流程 sync-warrants 會用。API 規格見 https://finmind.github.io/
  *
  * 文件參考:
  * - dataset=TaiwanStockInfoWithWarrantSummary&data_id={標的代碼}

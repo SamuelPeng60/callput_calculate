@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS warrant_quotes (
     ask_price REAL,
     close_price REAL,
     volume INTEGER,
+    strike_price REAL,     -- 當天適用的履約價 (除權息會調整；NULL = 用 warrants 主檔的)
+    exercise_ratio REAL,   -- 當天適用的行使比例 (同上)
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(warrant_id, trade_date)
 );

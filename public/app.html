@@ -96,9 +96,13 @@
     margin: 16px 0;
     flex-wrap: wrap;
   }
-  .search-bar input[type="text"] {
+  .search-box {
+    position: relative;
     flex: 1;
     min-width: 180px;
+  }
+  .search-bar input[type="text"] {
+    width: 100%;
     padding: 10px 14px;
     font-size: 15px;
     border: 1px solid var(--border);
@@ -120,6 +124,33 @@
   .search-bar button:hover { opacity: 0.9; }
   .search-bar button:disabled { opacity: 0.5; cursor: not-allowed; }
 
+  /* 搜尋框自動完成下拉 */
+  .suggest {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    z-index: 20;
+    max-height: 320px;
+    overflow-y: auto;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+  }
+  .suggest-item {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    padding: 8px 14px;
+    cursor: pointer;
+  }
+  .suggest-item.active, .suggest-item:hover { background: var(--accent-dim); }
+  .suggest-item .sid { font-weight: 600; min-width: 56px; font-variant-numeric: tabular-nums; }
+  .suggest-item .smarket { margin-left: auto; color: var(--text-dim); font-size: 12px; }
+  .suggest-msg { padding: 10px 14px; color: var(--text-dim); }
+  .suggest-more { padding: 6px 14px; color: var(--text-dim); font-size: 12px; border-top: 1px solid var(--border); }
+
   .quick-picks { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
   .quick-picks button {
     padding: 5px 12px;
@@ -139,6 +170,28 @@
     min-height: 18px;
   }
   .status-line.error { color: var(--expensive-fg); }
+
+  /* 背景更新完成的提示 */
+  .toast {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    z-index: 50;
+    transform: translate(-50%, -20px);
+    max-width: calc(100% - 32px);
+    padding: 12px 20px;
+    border-radius: 8px;
+    background: var(--cheap-bg);
+    color: var(--cheap-fg);
+    border: 1px solid var(--cheap-border);
+    font-weight: 600;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s, transform 0.25s;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+  .toast.error { background: var(--expensive-bg); color: var(--expensive-fg); border-color: var(--expensive-border); }
 
   .toolbar {
     display: flex;
@@ -245,6 +298,8 @@
   tbody tr.row-danger td:first-child { padding-left: 9px; }
 
   .maturity-danger, .decay-danger { color: var(--expensive-fg); font-weight: 700; }
+  .itm { color: var(--text); }
+  .otm { color: var(--text-dim); }
   .maturity-warn { color: #b8860b; font-weight: 600; }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .maturity-warn { color: #d4a72c; }
@@ -328,7 +383,7 @@
   @media (max-width: 640px) {
     .wrap { padding: 14px 10px 40px; }
     h1 { font-size: 17px; }
-    table { min-width: 820px; }
+    table { min-width: 880px; }
   }
 </style>
 </head>
@@ -340,11 +395,15 @@
   </header>
 
   <div class="search-bar">
-    <input type="text" id="stockInput" placeholder="輸入股票代號，例如 2330" autocomplete="off" inputmode="numeric">
+    <div class="search-box">
+      <input type="text" id="stockInput" placeholder="輸入股票代號或名稱，例如 2330 或 台積" autocomplete="off">
+      <div class="suggest" id="suggestBox" style="display:none;"></div>
+    </div>
     <button id="searchBtn">查詢</button>
   </div>
   <div class="quick-picks" id="quickPicks"></div>
   <div class="status-line" id="statusLine"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <div id="toolbar" class="toolbar" style="display:none;">
     <div class="group">
@@ -454,6 +513,7 @@
     { key: 'issuer', label: '發行商', align: 'left', sortable: true },
     { key: 'type', label: '認購/售', sortable: true },
     { key: 'strike_price', label: '履約價', sortable: true, fmt: v => fmtNum(v, 2) },
+    { key: 'moneyness_pct', label: '價內外', sortable: true },
     { key: 'days_to_maturity', label: '剩餘天數', sortable: true, fmt: fmtDays },
     { key: 'exercise_ratio', label: '行使比例', sortable: true, fmt: v => fmtNum(v, 3) },
     { key: 'bid_price', label: '委買價', sortable: true, fmt: v => fmtNum(v, 3) },
@@ -493,10 +553,26 @@
   }
 
   // 每日時間價值衰減% = |Theta(每交易日)| / 權證價格；價格用委買價(同實質槓桿)，沒有就用收盤價
+  // 價內外% (正 = 價內、負 = 價外)：認購 (股價-履約價)/履約價，認售 (履約價-股價)/履約價
+  function moneynessPct(w) {
+    if (!w.underlying_close || !w.strike_price) return null;
+    const diff = w.type === 'put' ? w.strike_price - w.underlying_close : w.underlying_close - w.strike_price;
+    return diff / w.strike_price * 100;
+  }
+  function fmtMoneyness(v) {
+    if (v == null) return '—';
+    if (Math.abs(v) < 0.05) return '價平';
+    return v > 0 ? `<span class="itm">價內 ${fmtNum(v, 1)}%</span>` : `<span class="otm">價外 ${fmtNum(-v, 1)}%</span>`;
+  }
+
   function decayPct(w) {
     const price = w.bid_price || w.warrant_close;
     if (w.theta == null || !price) return null;
     return Math.abs(w.theta) / price * 100;
+  }
+
+  function isHighDecay(w) {
+    return w.decay_pct != null && w.decay_pct > DECAY_DANGER_PCT;
   }
 
   function isRiskRow(w) {
@@ -504,16 +580,27 @@
   }
 
   async function runSearch() {
-    const stockId = stockInput.value.trim();
-    if (!stockId) {
+    hideSuggest();
+    stopSyncPoll();
+    const input = stockInput.value.trim();
+    if (!input) {
       setStatus('請輸入股票代號', true);
       return;
     }
+    // 輸入名稱 -> 換成第一個符合的代號；股票清單有載入時，清單裡沒有的直接回查無此股票
+    let stockId = input.toUpperCase();
+    if (stockList && stockList.length) {
+      const matches = HAN_START.test(input) ? matchStocks(input) : stockList.filter(s => s.id === stockId);
+      if (matches.length === 0) {
+        setStatus('查無此股票', true);
+        renderEmpty('查無此股票');
+        toolbar.style.display = 'none';
+        return;
+      }
+      stockId = matches[0].id;
+      stockInput.value = stockId;
+    }
     setStatus('查詢中...', false, true);
-    // 沒同步過的標的，後端會即時抓 TWSE/FinMind 再計算，比較久
-    const slowHint = setTimeout(() => {
-      setStatus(`第一次查詢 ${escapeHtml(stockId)}，正在即時抓取證交所資料並計算，約需 10–30 秒...`, false, true);
-    }, 1500);
     searchBtn.disabled = true;
     toolbar.style.display = 'none';
     resultArea.innerHTML = '';
@@ -528,8 +615,16 @@
         return;
       }
 
-      rawWarrants = (data.warrants || []).map(w => ({ ...w, decay_pct: decayPct(w) }));
+      rawWarrants = (data.warrants || []).map(w => ({ ...w, decay_pct: decayPct(w), moneyness_pct: moneynessPct(w) }));
       currentMeta = data;
+      if (data.updating) startSyncPoll(data.stock_id, data.updating);
+
+      // 本機完全沒資料、背景正在抓 (HTTP 202)
+      if (data.updating && rawWarrants.length === 0) {
+        setStatus(`正在背景抓取 ${escapeHtml(data.stock_id)} ${data.updating} 的資料並計算 (第一次約 1–5 分鐘)，完成後會自動顯示...`, false, true);
+        renderEmpty('資料準備中，請稍候');
+        return;
+      }
 
       if (rawWarrants.length === 0) {
         setStatus(`${data.stock_id} 在 ${data.trade_date} 沒有權證資料`, false);
@@ -537,7 +632,9 @@
         return;
       }
 
-      setStatus(`${data.stock_id}　資料日期：${data.trade_date}　共 ${data.count} 檔權證`, false);
+      setStatus(`${data.stock_id}　資料日期：${data.trade_date}　共 ${data.count} 檔權證`
+        + (data.notice ? `　⚠ ${escapeHtml(data.notice)}` : '')
+        + (data.updating ? `　<span class="spinner"></span>正在背景更新 ${data.updating} 資料，完成後會自動刷新` : ''), false);
       populateIssuerFilter(rawWarrants);
       toolbar.style.display = 'flex';
       page = 1;
@@ -546,9 +643,52 @@
       setStatus('連線失敗，請確認後端 API 是否啟動', true);
       renderEmpty('無法連線到後端服務');
     } finally {
-      clearTimeout(slowHint);
       searchBtn.disabled = false;
     }
+  }
+
+  // ── 背景更新：每 5 秒問一次進度，完成後跳「更新完成」並刷新一次 ──
+  const SYNC_POLL_MS = 5000;
+  let syncPollTimer = null;
+
+  function stopSyncPoll() {
+    clearTimeout(syncPollTimer);
+    syncPollTimer = null;
+  }
+
+  function startSyncPoll(stockId, tradeDate) {
+    stopSyncPoll();
+    const tick = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/sync-status?stock_id=${encodeURIComponent(stockId)}&trade_date=${tradeDate}`);
+        const job = await res.json();
+        if (job.state === 'running') {
+          syncPollTimer = setTimeout(tick, SYNC_POLL_MS);
+          return;
+        }
+        syncPollTimer = null;
+        if (job.state === 'failed') {
+          showToast(`${stockId} ${tradeDate} 資料更新失敗：${job.message || '未知錯誤'}`, true);
+        } else {
+          showToast(`${stockId} ${tradeDate} 資料更新完成`);
+        }
+        // 刷新一次 (後端不會重複啟動剛結束的同步，所以不會一直循環)
+        stockInput.value = stockId;
+        runSearch();
+      } catch (e) {
+        syncPollTimer = setTimeout(tick, SYNC_POLL_MS); // 連線暫時失敗就繼續等
+      }
+    };
+    syncPollTimer = setTimeout(tick, SYNC_POLL_MS);
+  }
+
+  const toastEl = document.getElementById('toast');
+  let toastTimer = null;
+  function showToast(text, isError) {
+    toastEl.textContent = text;
+    toastEl.className = 'toast show' + (isError ? ' error' : '');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toastEl.className = 'toast'; }, 4000);
   }
 
   function setStatus(text, isError, loading) {
@@ -579,6 +719,11 @@
     });
 
     rows.sort((a, b) => {
+      // 每日衰減% 超過門檻的一律排到後面 (除非使用者就是在依衰減% 排序)
+      if (sortKey !== 'decay_pct') {
+        const ah = isHighDecay(a), bh = isHighDecay(b);
+        if (ah !== bh) return ah ? 1 : -1;
+      }
       let av = a[sortKey], bv = b[sortKey];
       if (sortKey === 'label') {
         const order = { fair: 0, cheap: 1, expensive: 2, unknown: 3 };
@@ -694,6 +839,7 @@
       <td class="left">${escapeHtml(w.issuer || '—')}</td>
       <td><span class="type-tag ${typeTagClass}">${w.type_label}</span></td>
       <td>${fmtNum(w.strike_price, 2)}</td>
+      <td>${fmtMoneyness(w.moneyness_pct)}</td>
       <td>${fmtDays(w.days_to_maturity)}</td>
       <td>${fmtNum(w.exercise_ratio, 3)}</td>
       <td>${fmtNum(w.bid_price, 3)}</td>
@@ -762,8 +908,121 @@
   bindThreshold(daysFilterEl, daysCustomInput, 'minDays', 1);
   bindThreshold(volumeFilterEl, volumeCustomInput, 'minVolume', 1000); // 自訂輸入單位: 張
 
+  // ── 搜尋框自動完成：打滿 4 碼數字 或 以中文字開頭 時，下拉顯示符合的股票 ──
+  const suggestBox = document.getElementById('suggestBox');
+  const HAN_START = /^\p{Script=Han}/u;
+  const SUGGEST_LIMIT = 200;
+  let stockList = null; // [{id, name, market}]，載入前為 null
+  let suggestItems = [];
+  let suggestIdx = -1;
+
+  fetch(`${API_BASE}/api/stocks`)
+    .then(res => res.ok ? res.json() : [])
+    .catch(() => [])
+    .then(list => {
+      stockList = list;
+      if (document.activeElement === stockInput) updateSuggest();
+    });
+
+  // 代號：前綴相符；名稱：開頭相符的排前面，其次是名稱中包含的，各自一般股票在前、ETF(00開頭)在後
+  function matchStocks(q) {
+    if (HAN_START.test(q)) {
+      const isEtf = s => s.id.startsWith('00');
+      const byEtfLast = (a, b) => isEtf(a) - isEtf(b); // 穩定排序，同類維持代號順序
+      const starts = stockList.filter(s => s.name.startsWith(q)).sort(byEtfLast);
+      const contains = stockList.filter(s => !s.name.startsWith(q) && s.name.includes(q)).sort(byEtfLast);
+      return starts.concat(contains);
+    }
+    const code = q.toUpperCase();
+    return stockList.filter(s => s.id.startsWith(code));
+  }
+
+  function shouldSuggest(q) {
+    return /^\d{4}[0-9A-Z]*$/i.test(q) || HAN_START.test(q);
+  }
+
+  function updateSuggest() {
+    const q = stockInput.value.trim();
+    if (!shouldSuggest(q)) {
+      hideSuggest();
+      return;
+    }
+    if (stockList === null) {
+      showSuggestHtml('<div class="suggest-msg">載入股票清單中...</div>');
+      suggestItems = [];
+      return;
+    }
+    if (stockList.length === 0) {
+      hideSuggest(); // 清單載入失敗，就不提供下拉，直接查
+      return;
+    }
+    const matches = matchStocks(q);
+    suggestItems = matches.slice(0, SUGGEST_LIMIT);
+    suggestIdx = -1;
+    if (suggestItems.length === 0) {
+      showSuggestHtml('<div class="suggest-msg">查無此股票</div>');
+      return;
+    }
+    const more = matches.length > SUGGEST_LIMIT
+      ? `<div class="suggest-more">還有 ${matches.length - SUGGEST_LIMIT} 筆，請輸入更多字縮小範圍</div>`
+      : '';
+    showSuggestHtml(suggestItems.map((s, i) => `
+      <div class="suggest-item" data-idx="${i}">
+        <span class="sid">${escapeHtml(s.id)}</span>
+        <span class="sname">${escapeHtml(s.name)}</span>
+        <span class="smarket">${s.market === 'OTC' ? '上櫃' : '上市'}</span>
+      </div>`).join('') + more);
+  }
+
+  function showSuggestHtml(html) {
+    suggestBox.innerHTML = html;
+    suggestBox.style.display = 'block';
+    suggestBox.scrollTop = 0;
+  }
+
+  function hideSuggest() {
+    suggestBox.style.display = 'none';
+    suggestItems = [];
+    suggestIdx = -1;
+  }
+
+  function pickSuggest(i) {
+    stockInput.value = suggestItems[i].id;
+    runSearch();
+  }
+
+  function moveSuggest(delta) {
+    if (suggestItems.length === 0) return;
+    suggestIdx = (suggestIdx + delta + suggestItems.length) % suggestItems.length;
+    suggestBox.querySelectorAll('.suggest-item').forEach((el, i) => {
+      el.classList.toggle('active', i === suggestIdx);
+      if (i === suggestIdx) el.scrollIntoView({ block: 'nearest' });
+    });
+  }
+
+  // mousedown + preventDefault：避免點選前輸入框先失焦把下拉關掉
+  suggestBox.addEventListener('mousedown', e => {
+    e.preventDefault();
+    const item = e.target.closest('.suggest-item');
+    if (item) pickSuggest(Number(item.dataset.idx));
+  });
+  stockInput.addEventListener('input', e => { if (!e.isComposing) updateSuggest(); });
+  stockInput.addEventListener('compositionend', updateSuggest); // 注音/拼音選完字才比對
+  stockInput.addEventListener('focus', updateSuggest);
+  stockInput.addEventListener('blur', hideSuggest);
+
   searchBtn.addEventListener('click', runSearch);
-  stockInput.addEventListener('keydown', e => { if (e.key === 'Enter') runSearch(); });
+  stockInput.addEventListener('keydown', e => {
+    if (e.isComposing) return; // 選字中的 Enter 不算送出
+    const open = suggestBox.style.display !== 'none';
+    if (e.key === 'ArrowDown' && open) { e.preventDefault(); moveSuggest(1); }
+    else if (e.key === 'ArrowUp' && open) { e.preventDefault(); moveSuggest(-1); }
+    else if (e.key === 'Escape') hideSuggest();
+    else if (e.key === 'Enter') {
+      if (open && suggestIdx >= 0) pickSuggest(suggestIdx);
+      else runSearch();
+    }
+  });
 
   // 頁面載入時自動查一次示範股票
   stockInput.value = '2330';
