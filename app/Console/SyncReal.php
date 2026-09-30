@@ -28,7 +28,8 @@ class SyncReal
     ) {
     }
 
-    public function handle(string $stockId, ?string $tradeDate = null): int
+    /** $allowStaleTerms: 今天的權證條件還沒下載就先用舊快照 (見 MarketData::warrantTerms) */
+    public function handle(string $stockId, ?string $tradeDate = null, bool $allowStaleTerms = false): int
     {
         ini_set('memory_limit', '1G'); // 權證基本資料 JSON 約 40MB
 
@@ -50,8 +51,8 @@ class SyncReal
         }
 
         // 只下載有需要的那個市場的基本資料 (TWSE 那份 40MB)
-        $terms = ($twseQuotes ? $this->twse->warrantTerms(array_keys($twseQuotes), $tradeDate) : [])
-            + ($tpexQuotes ? $this->tpex->warrantTerms(array_keys($tpexQuotes), $tradeDate) : []);
+        $terms = ($twseQuotes ? $this->twse->warrantTerms(array_keys($twseQuotes), $tradeDate, $allowStaleTerms) : [])
+            + ($tpexQuotes ? $this->tpex->warrantTerms(array_keys($tpexQuotes), $tradeDate, $allowStaleTerms) : []);
         $quotes = $twseQuotes + $tpexQuotes;
 
         $pdo = Database::connection();
@@ -89,9 +90,16 @@ class SyncReal
         $pdo->commit();
         echo "寫入 {$count} 檔權證 + 報價" . ($skipped ? "，跳過 {$skipped} 檔(非一般型或缺基本資料)" : '') . "。\n";
 
-        // HV 需要回看 HV_LOOKBACK_DAYS 個交易日，抓半年前開始的日線就夠
+        // HV 需要回看 HV_LOOKBACK_DAYS 個交易日，抓半年前開始的日線就夠；
+        // 本機已經有這段期間的日線就只補最後一筆之後的 (FinMind 每次約 1 秒)
         $start = date('Y-m-d', strtotime($tradeDate . ' -180 days'));
-        (new SyncUnderlyingPrice())->handle($stockId, $start);
+        $range = PriceSnapshot::finMindRange($stockId);
+        if ($range !== null && $range['first'] <= date('Y-m-d', strtotime($start . ' +10 days'))) {
+            $start = $range['last'] >= $tradeDate ? null : $range['last'];
+        }
+        if ($start !== null) {
+            (new SyncUnderlyingPrice())->handle($stockId, $start);
+        }
 
         // FinMind 當天資料可能比交易所晚更新，缺當天收盤就用行情資料附的標的收盤價
         $underlyingClose = current(array_filter(array_column($quotes, 'underlying_close'))) ?: null;

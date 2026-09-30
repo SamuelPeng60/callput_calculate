@@ -6,11 +6,16 @@
  * GET /api/stocks
  *   -> 上市+上櫃股票/ETF 代號名稱清單 [{id, name, market}] (搜尋框自動完成用)
  *
- * GET /api/warrants?stock_id=2330[&trade_date=2026-09-18]
+ * GET /api/warrants?stock_id=2330[&trade_date=2026-09-18][&limit=200]
  *   -> 回傳該標的股全部權證 + 合理價 + 標籤
+ *   帶 limit 時只回成交量最大的前 N 檔 (count = 回傳檔數、total = 全部檔數)
  *   不帶 trade_date 時回傳本機最新的結果；若本機還沒有最近交易日的資料(沒查過或資料舊了)，
  *   會在背景跑 SyncJob (TWSE/TPEx + FinMind)，回應帶 updating=該交易日
  *   (本機完全沒資料時回 HTTP 202、warrants 為空)；前端輪詢下面的 sync-status，完成後再查一次
+ *
+ * POST /api/refresh?stock_id=2330
+ *   -> 使用者按「刷新」：重新確認最近交易日 (不看快取)，不管本機資料新舊都在背景重跑同步
+ *      回 {trade_date, state}；已經在跑就不重複啟動。前端接著輪詢 sync-status
  *
  * GET /api/sync-status?stock_id=2330&trade_date=2026-09-29
  *   -> 背景同步狀態 {state: running|done|failed|none, count, message}
@@ -57,6 +62,33 @@ if ($path === '/api/stocks') {
     exit;
 }
 
+// 使用者按「刷新」：強制在背景重新同步最近交易日
+if ($path === '/api/refresh') {
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        jsonError(405, '請用 POST');
+    }
+    $stockId = strtoupper(trim($_GET['stock_id'] ?? ''));
+    if (!preg_match('/^[0-9A-Z]{4,6}$/', $stockId)) {
+        jsonError(400, '股票代號格式不正確');
+    }
+    try {
+        $marketDate = (new TwseClient())->latestTradeDate(fresh: true);
+    } catch (Throwable $e) {
+        jsonError(502, '無法取得證交所最新交易日：' . $e->getMessage());
+    }
+    $job = SyncJob::status($stockId, $marketDate);
+    $busy = ($job['state'] ?? null) === 'running' && !SyncJob::shouldStart($job);
+    if (!$busy && !SyncJob::isRefreshingTerms($job)) {
+        SyncJob::spawn($stockId, $marketDate);
+    }
+    echo json_encode([
+        'stock_id' => $stockId,
+        'trade_date' => $marketDate,
+        'state' => SyncJob::status($stockId, $marketDate)['state'] ?? 'running',
+    ], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
 // 背景同步進度 (前端輪詢用)
 if ($path === '/api/sync-status') {
     $stockId = strtoupper(trim($_GET['stock_id'] ?? ''));
@@ -90,6 +122,7 @@ if ($path === '/api/warrants' || $path === '/api/warrants/') {
     $notice = null;
 
     $updating = null; // 背景正在更新的交易日
+    $updatingTerms = false; // true = 結果是用舊權證條件算的，背景正在下載最新條件重算
 
     // 不指定日期 -> 要最近交易日的結果；本機沒有(沒查過、或資料停在之前的交易日)就在背景抓，
     // 先回本機既有的資料 + updating，前端輪詢 /api/sync-status，完成後再刷新
@@ -111,6 +144,13 @@ if ($path === '/api/warrants' || $path === '/api/warrants/') {
             }
             if ($job['state'] === 'running') {
                 $updating = $marketDate;
+            }
+        } elseif ($marketDate !== null && $localDate === $marketDate) {
+            // 已經用舊條件算出結果，背景還在下載最新條件重算
+            $job = SyncJob::status($stockId, $marketDate);
+            if (SyncJob::isRefreshingTerms($job)) {
+                $updating = $marketDate;
+                $updatingTerms = true;
             }
         }
 
@@ -136,6 +176,14 @@ if ($path === '/api/warrants' || $path === '/api/warrants/') {
     }
 
     $rows = WarrantDailyMetric::listForStock($stockId, $tradeDate);
+    $total = count($rows);
+
+    // 只取成交量最大的前 N 檔 (熱門股權證上千檔，全部傳給前端太慢)
+    $limit = (int)($_GET['limit'] ?? 0);
+    if ($limit > 0 && $total > $limit) {
+        usort($rows, fn ($a, $b) => ($b['volume'] ?? -1) <=> ($a['volume'] ?? -1));
+        $rows = array_slice($rows, 0, $limit);
+    }
 
     $warrants = array_map(function ($r) {
         return [
@@ -175,8 +223,10 @@ if ($path === '/api/warrants' || $path === '/api/warrants/') {
         'stock_id' => $stockId,
         'trade_date' => $tradeDate,
         'count' => count($warrants),
+        'total' => $total,
         'notice' => $notice,
         'updating' => $updating, // 非 null = 背景正在更新這個交易日，前端輪詢 /api/sync-status
+        'updating_terms' => $updatingTerms,
         'warrants' => $warrants,
     ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
     exit;

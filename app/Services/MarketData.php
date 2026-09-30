@@ -9,6 +9,9 @@ use RuntimeException;
  */
 class MarketData
 {
+    /** 這次執行中「先用了舊快照」的條件檔 prefix => 快照日期 (呼叫端據此決定要不要再下載最新的重算) */
+    public static array $staleTerms = [];
+
     public static function get(string $url, int $timeout = 30): string
     {
         $ch = curl_init($url);
@@ -69,28 +72,30 @@ class MarketData
      * 查過去某個交易日時，用「該日當天或之後最近的一份」快照，
      * 盡量貼近當時的履約價/行使比例(除權息會調整)；都沒有才退回今天的。
      *
+     * $allowStale = true 時，今天的還沒下載就先用之前最近的一份 (條件只有除權息才會變)，
+     * 並記在 self::$staleTerms，讓呼叫端之後再下載最新的重算；完全沒有快照才當場下載。
+     *
      * @param string[]|null $onlyIds 只保留這些代號
      * @return array<string, array{strike_price:float, exercise_ratio:float, maturity_date:string,
      *   listed_type:string, fulfillment_method:string}>
      */
-    public static function warrantTerms(string $url, string $cachePrefix, ?array $onlyIds = null, ?string $asOfDate = null): array
+    public static function warrantTerms(string $url, string $cachePrefix, ?array $onlyIds = null, ?string $asOfDate = null, bool $allowStale = false): array
     {
         self::convertLegacyTermsCache($cachePrefix);
 
         $today = date('Ymd');
         $asOf = $asOfDate === null ? $today : date('Ymd', strtotime($asOfDate));
-        $snapshotDate = self::termsSnapshotDateOnOrAfter($cachePrefix, $asOf) ?? $today;
+        $snapshotDate = self::termsSnapshotDateOnOrAfter($cachePrefix, $asOf);
+        if ($snapshotDate === null && $allowStale && ($prev = self::latestTermsSnapshot($cachePrefix)) !== null) {
+            $snapshotDate = $prev;
+            self::$staleTerms[$cachePrefix] = $prev;
+            echo "先用 {$prev} 的權證條件快照計算 ({$cachePrefix})，最新條件稍後在背景下載。\n";
+        }
+        $snapshotDate ??= $today;
 
         $file = self::cacheDir() . "/{$cachePrefix}_terms_{$snapshotDate}.json";
         if (!is_file($file)) {
-            echo "下載權證基本資料 {$cachePrefix} (每天只抓一次)...\n";
-            // TWSE 那份約 40MB，證交所有時只有 ~200KB/s，逾時要給夠
-            $rows = json_decode(self::get($url, 600), true);
-            if (!is_array($rows)) {
-                throw new RuntimeException("權證基本資料格式錯誤 ({$cachePrefix})");
-            }
-            self::putFile($file, json_encode(self::parseTerms($rows), JSON_UNESCAPED_UNICODE));
-            unset($rows);
+            self::downloadTerms($url, $cachePrefix, $file);
         }
         if ($snapshotDate > $asOf && $snapshotDate === $today) {
             echo "注意：沒有 {$asOf} 當時的權證條件快照，改用今天的條件(期間若有除權息調整，履約價/行使比例可能不同)。\n";
@@ -98,6 +103,43 @@ class MarketData
 
         $terms = json_decode(file_get_contents($file), true);
         return $onlyIds === null ? $terms : array_intersect_key($terms, array_flip($onlyIds));
+    }
+
+    /**
+     * 下載條件檔並存成精簡快照。多個背景程序可能同時要同一份 (同時查好幾檔股票)，
+     * 用檔案鎖讓同一時間只有一個在下載，其他的等它下載完直接讀。
+     */
+    private static function downloadTerms(string $url, string $cachePrefix, string $file): void
+    {
+        $lock = fopen($file . '.lock', 'c');
+        flock($lock, LOCK_EX);
+        try {
+            if (is_file($file)) {
+                return; // 等鎖的時候別的程序已經下載好了
+            }
+            echo "下載權證基本資料 {$cachePrefix} (每天只抓一次)...\n";
+            // TWSE 那份約 40MB，證交所有時只有 ~200KB/s，逾時要給夠
+            $rows = json_decode(self::get($url, 600), true);
+            if (!is_array($rows)) {
+                throw new RuntimeException("權證基本資料格式錯誤 ({$cachePrefix})");
+            }
+            self::putFile($file, json_encode(self::parseTerms($rows), JSON_UNESCAPED_UNICODE));
+        } finally {
+            flock($lock, LOCK_UN);
+            fclose($lock);
+        }
+    }
+
+    /** 已存在的快照中最新的一份 (Ymd)；沒有回 null */
+    private static function latestTermsSnapshot(string $cachePrefix): ?string
+    {
+        $dates = [];
+        foreach (glob(self::cacheDir() . "/{$cachePrefix}_terms_*.json") as $f) {
+            if (preg_match('/_terms_(\d{8})\.json$/', $f, $m)) {
+                $dates[] = $m[1];
+            }
+        }
+        return $dates ? max($dates) : null;
     }
 
     /** 已存在的快照中，日期 >= $asOf 的最早一份 (Ymd)；沒有回 null */

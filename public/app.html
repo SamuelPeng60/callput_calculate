@@ -228,6 +228,17 @@
   }
   .toolbar .spacer { flex: 1; }
   .count-badge { font-size: 12.5px; color: var(--text-dim); }
+  .show-all-btn {
+    padding: 5px 12px;
+    font-size: 12.5px;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--accent);
+    cursor: pointer;
+  }
+  .show-all-btn:hover { background: var(--accent-dim); }
+  .show-all-btn:disabled { opacity: .5; cursor: default; }
   .toolbar input[type="number"] {
     padding: 6px 8px;
     font-size: 12.5px;
@@ -450,6 +461,8 @@
     </div>
     <div class="spacer"></div>
     <div class="count-badge" id="countBadge"></div>
+    <button type="button" class="show-all-btn" id="showAllBtn" style="display:none;">顯示所有權證</button>
+    <button type="button" class="show-all-btn" id="refreshBtn" title="重新抓取這檔股票最新的權證行情與條件並重算">刷新權證資料</button>
   </div>
   <div class="hint-line">
     <span class="hint-dot rec"></span> 券商篩選器常見下限為60天，但耗損速度仍偏快；建議以120天以上為門檻，時間價值耗損速度會更平緩。
@@ -474,6 +487,8 @@
   const labelFilterEl = document.getElementById('labelFilter');
   const issuerFilterEl = document.getElementById('issuerFilter');
   const countBadge = document.getElementById('countBadge');
+  const showAllBtn = document.getElementById('showAllBtn');
+  const refreshBtn = document.getElementById('refreshBtn');
   const quickPicks = document.getElementById('quickPicks');
 
   const daysFilterEl = document.getElementById('daysFilter');
@@ -487,6 +502,9 @@
   let sortKey = 'label';
   let sortDir = 'asc'; // asc = 合理優先
   let page = 1;
+  const QUERY_LIMIT = 200;   // 每次查詢只抓成交量前 200 檔，按「顯示所有權證」才抓全部
+  let showAll = false;
+  let lastStockId = null;    // 換股票時 showAll 重設；同一檔背景更新完刷新時保留
 
   const PAGE_SIZE = 100;
   const MATURITY_DANGER_DAYS = 30; // 剩餘天數 < 這個值 -> 紅色警示(時間價值加速衰退)
@@ -614,13 +632,16 @@
       stockId = matches[0].id;
       stockInput.value = stockId;
     }
+    if (stockId !== lastStockId) showAll = false;
+    lastStockId = stockId;
     setStatus('查詢中...', false, true);
     searchBtn.disabled = true;
     toolbar.style.display = 'none';
     resultArea.innerHTML = '';
 
     try {
-      const res = await fetch(`${API_BASE}/api/warrants?stock_id=${encodeURIComponent(stockId)}`);
+      const limitParam = showAll ? '' : `&limit=${QUERY_LIMIT}`;
+      const res = await fetch(`${API_BASE}/api/warrants?stock_id=${encodeURIComponent(stockId)}${limitParam}`);
       const data = await res.json();
 
       if (!res.ok) {
@@ -631,7 +652,7 @@
 
       rawWarrants = (data.warrants || []).map(w => ({ ...w, decay_pct: decayPct(w), moneyness_pct: moneynessPct(w) }));
       currentMeta = data;
-      if (data.updating) startSyncPoll(data.stock_id, data.updating);
+      if (data.updating) startSyncPoll(data.stock_id, data.updating, !!data.updating_terms);
 
       // 本機完全沒資料、背景正在抓 (HTTP 202)
       if (data.updating && rawWarrants.length === 0) {
@@ -646,9 +667,14 @@
         return;
       }
 
-      setStatus(`${data.stock_id}　資料日期：${data.trade_date}　共 ${data.count} 檔權證`
+      const truncated = data.total > data.count;
+      showAllBtn.style.display = truncated ? '' : 'none';
+      showAllBtn.textContent = `顯示所有權證 (${data.total} 檔)`;
+      setStatus(`${data.stock_id}　資料日期：${data.trade_date}　`
+        + (truncated ? `顯示成交量前 ${data.count} 檔 / 共 ${data.total} 檔權證` : `共 ${data.count} 檔權證`)
         + (data.notice ? `　⚠ ${escapeHtml(data.notice)}` : '')
-        + (data.updating ? `　<span class="spinner"></span>正在背景更新 ${data.updating} 資料，完成後會自動刷新` : ''), false);
+        + (data.updating_terms ? `　<span class="spinner"></span>目前用前一份權證條件計算，正在背景下載最新條件，完成後會自動刷新`
+          : data.updating ? `　<span class="spinner"></span>正在背景更新 ${data.updating} 資料，完成後會自動刷新` : ''), false);
       populateIssuerFilter(rawWarrants);
       toolbar.style.display = 'flex';
       page = 1;
@@ -661,8 +687,9 @@
     }
   }
 
-  // ── 背景更新：每 5 秒問一次進度，完成後跳「更新完成」並刷新一次 ──
-  const SYNC_POLL_MS = 5000;
+  // ── 背景更新：每秒問一次進度 (只讀狀態檔，很輕)，完成後跳「更新完成」並刷新一次 ──
+  const SYNC_POLL_MS = 1000;
+  const TERMS_POLL_MS = 5000; // 等最新權證條件 (下載 40MB 要幾分鐘)，不用問那麼勤
   let syncPollTimer = null;
 
   function stopSyncPoll() {
@@ -670,19 +697,23 @@
     syncPollTimer = null;
   }
 
-  function startSyncPoll(stockId, tradeDate) {
+  // waitTerms = true：結果已先用舊條件算好，等的是背景下載最新條件後的重算
+  function startSyncPoll(stockId, tradeDate, waitTerms = false) {
     stopSyncPoll();
+    const interval = waitTerms ? TERMS_POLL_MS : SYNC_POLL_MS;
     const tick = async () => {
       try {
         const res = await fetch(`${API_BASE}/api/sync-status?stock_id=${encodeURIComponent(stockId)}&trade_date=${tradeDate}`);
         const job = await res.json();
-        if (job.state === 'running') {
-          syncPollTimer = setTimeout(tick, SYNC_POLL_MS);
+        if (job.state === 'running' || (waitTerms && job.state === 'refreshing')) {
+          syncPollTimer = setTimeout(tick, interval);
           return;
         }
         syncPollTimer = null;
         if (job.state === 'failed') {
           showToast(`${stockId} ${tradeDate} 資料更新失敗：${job.message || '未知錯誤'}`, true);
+        } else if (waitTerms) {
+          showToast(`${stockId} 已用最新權證條件重新計算`);
         } else {
           showToast(`${stockId} ${tradeDate} 資料更新完成`);
         }
@@ -690,10 +721,10 @@
         stockInput.value = stockId;
         runSearch();
       } catch (e) {
-        syncPollTimer = setTimeout(tick, SYNC_POLL_MS); // 連線暫時失敗就繼續等
+        syncPollTimer = setTimeout(tick, interval); // 連線暫時失敗就繼續等
       }
     };
-    syncPollTimer = setTimeout(tick, SYNC_POLL_MS);
+    syncPollTimer = setTimeout(tick, interval);
   }
 
   const toastEl = document.getElementById('toast');
@@ -893,6 +924,32 @@
   }
   bindSeg(typeFilterEl, 'type');
   bindSeg(labelFilterEl, 'label');
+  showAllBtn.addEventListener('click', () => {
+    showAll = true;
+    showAllBtn.disabled = true;
+    stockInput.value = lastStockId;
+    runSearch().finally(() => { showAllBtn.disabled = false; });
+  });
+  // 刷新：後端不管本機資料新舊都在背景重跑同步，這裡接著輪詢進度，完成後自動刷新表格
+  refreshBtn.addEventListener('click', async () => {
+    const stockId = lastStockId;
+    if (!stockId) return;
+    refreshBtn.disabled = true;
+    try {
+      const res = await fetch(`${API_BASE}/api/refresh?stock_id=${encodeURIComponent(stockId)}`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || `刷新失敗 (HTTP ${res.status})`, true);
+        return;
+      }
+      setStatus(`正在重新抓取 ${escapeHtml(stockId)} ${data.trade_date} 的權證資料，完成後會自動刷新...`, false, true);
+      startSyncPoll(stockId, data.trade_date, data.state === 'refreshing');
+    } catch (e) {
+      showToast('連線失敗，請確認後端 API 是否啟動', true);
+    } finally {
+      refreshBtn.disabled = false;
+    }
+  });
   issuerFilterEl.addEventListener('change', () => {
     filters.issuer = issuerFilterEl.value;
     page = 1;

@@ -62,9 +62,9 @@ class TpexClient
      *
      * @param string[]|null $onlyIds
      */
-    public function warrantTerms(?array $onlyIds = null, ?string $asOfDate = null): array
+    public function warrantTerms(?array $onlyIds = null, ?string $asOfDate = null, bool $allowStale = false): array
     {
-        return MarketData::warrantTerms(self::BASIC_URL, 'tpex_t187ap37', $onlyIds, $asOfDate);
+        return MarketData::warrantTerms(self::BASIC_URL, 'tpex_t187ap37', $onlyIds, $asOfDate, $allowStale);
     }
 
     /**

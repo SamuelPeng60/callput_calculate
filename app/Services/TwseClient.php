@@ -66,11 +66,12 @@ class TwseClient
     /**
      * 從今天往回找，最近一個 TWSE 已公布權證收盤行情的交易日 (Y-m-d)
      * 結果快取 10 分鐘：網頁每次查詢都會問，今天還沒公布時不要每次都打證交所。
+     * $fresh = true 不看快取 (使用者按「刷新」時)。
      */
-    public function latestTradeDate(int $maxDaysBack = 10): string
+    public function latestTradeDate(int $maxDaysBack = 10, bool $fresh = false): string
     {
         $cacheFile = MarketData::cacheDir() . '/twse_latest_trade_date.txt';
-        if (is_file($cacheFile) && time() - filemtime($cacheFile) < 600) {
+        if (!$fresh && is_file($cacheFile) && time() - filemtime($cacheFile) < 600) {
             return trim(file_get_contents($cacheFile));
         }
 
@@ -92,9 +93,9 @@ class TwseClient
      *
      * @param string[]|null $onlyIds
      */
-    public function warrantTerms(?array $onlyIds = null, ?string $asOfDate = null): array
+    public function warrantTerms(?array $onlyIds = null, ?string $asOfDate = null, bool $allowStale = false): array
     {
-        return MarketData::warrantTerms(self::BASIC_URL, 'twse_t187ap37', $onlyIds, $asOfDate);
+        return MarketData::warrantTerms(self::BASIC_URL, 'twse_t187ap37', $onlyIds, $asOfDate, $allowStale);
     }
 
     /**

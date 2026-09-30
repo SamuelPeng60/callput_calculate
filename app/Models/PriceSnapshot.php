@@ -37,6 +37,21 @@ class PriceSnapshot
         return array_column($rows, 'close');
     }
 
+    /**
+     * 本機 FinMind 日線的最早/最晚日期；沒有回 null。
+     * 只看有開盤價的 (FinMind 來的)，行情資料補的單筆收盤價不算，避免之後漏補中間的日子。
+     */
+    public static function finMindRange(string $stockId): ?array
+    {
+        $stmt = Database::connection()->prepare(
+            'SELECT MIN(trade_date) AS first, MAX(trade_date) AS last FROM price_snapshots
+             WHERE stock_id = :sid AND open IS NOT NULL'
+        );
+        $stmt->execute(['sid' => $stockId]);
+        $row = $stmt->fetch();
+        return $row && $row['first'] ? $row : null;
+    }
+
     public static function closeOn(string $stockId, string $tradeDate): ?float
     {
         $stmt = Database::connection()->prepare(
