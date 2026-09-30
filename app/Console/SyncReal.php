@@ -36,8 +36,14 @@ class SyncReal
         $ofStock = fn ($q) => $q['underlying_id'] === $stockId;
 
         echo "抓取 {$tradeDate} 上市/上櫃權證收盤行情...\n";
-        $twseQuotes = array_filter($this->twse->dailyQuotes($tradeDate), $ofStock);
-        $tpexQuotes = array_filter($this->tpex->dailyQuotes($tradeDate), $ofStock);
+        $twseAll = $this->twse->dailyQuotes($tradeDate);
+        $tpexAll = $this->tpex->dailyQuotes($tradeDate);
+        if (empty($twseAll) && empty($tpexAll)) {
+            throw new \RuntimeException("{$tradeDate} 上市、上櫃都查無權證收盤行情 (非交易日或資料尚未公布?)");
+        }
+        $twseQuotes = array_filter($twseAll, $ofStock);
+        $tpexQuotes = array_filter($tpexAll, $ofStock);
+        unset($twseAll, $tpexAll);
         if (empty($twseQuotes) && empty($tpexQuotes)) {
             echo "{$tradeDate} 找不到標的 {$stockId} 的上市或上櫃權證。\n";
             return 0;

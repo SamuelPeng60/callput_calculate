@@ -21,7 +21,7 @@ class TwseClient
     private const BASIC_URL = 'https://openapi.twse.com.tw/v1/opendata/t187ap37_L';
 
     /**
-     * 某交易日的全部上市權證收盤報價
+     * 某交易日的全部上市權證收盤報價；該日沒資料回空陣列 (同 TpexClient::dailyQuotes())
      *
      * @return array<string, array{warrant_id:string, name:string, type:string, underlying_id:string,
      *   underlying_name:string, underlying_close:?float, close:?float, bid:?float, ask:?float, volume:?int}>
@@ -33,7 +33,7 @@ class TwseClient
         foreach (['0999' => 'call', '0999P' => 'put'] as $apiType => $type) {
             $json = $this->miIndex($tradeDate, $apiType);
             if ($json === null) {
-                throw new RuntimeException("TWSE MI_INDEX {$tradeDate}: 查無資料 (非交易日或資料尚未公布?)");
+                continue; // 非交易日或資料尚未公布
             }
 
             foreach ($json['tables'] ?? [] as $table) {

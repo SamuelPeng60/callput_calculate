@@ -522,8 +522,8 @@
     { key: 'biv_pct', label: 'BIV', sortable: true, fmt: v => fmtPct(v) },
     { key: 'effective_leverage', label: '實質槓桿', sortable: true, fmt: v => v == null ? '—' : fmtNum(v, 2) + 'x' },
     { key: 'spread_ratio_pct', label: '價差比', sortable: true, fmt: v => fmtPct(v) },
-    { key: 'theta', label: 'Theta/日', sortable: true, fmt: v => v == null ? '—' : fmtNum(v, 4) },
-    { key: 'decay_pct', label: '衰減%/日', sortable: true },
+    { key: 'theta', label: 'Theta/交易日', sortable: true, fmt: v => v == null ? '—' : fmtNum(v, 4) },
+    { key: 'decay_pct', label: '衰減%/交易日', sortable: true },
     { key: 'deviation_pct', label: '偏離%', sortable: true, fmt: v => fmtPct(v, true) },
     { key: 'label', label: '判斷', sortable: true },
   ];
@@ -539,6 +539,20 @@
   }
   function labelZh(l) {
     return { cheap: '便宜', fair: '合理', expensive: '偏貴', unknown: '資料不足' }[l] || l;
+  }
+
+  // 無法判斷的原因：[標籤文字, 滑鼠提示]
+  function unknownReason(w) {
+    if (w.bid_price == null) {
+      return ['無委買', '收盤時沒有委買價，無法反推 BIV，也無從比較合理價'];
+    }
+    if (w.days_to_maturity !== null && w.days_to_maturity <= 0) {
+      return ['已到期', '今天是最後交易日，剩餘時間為 0，無法用 Black-Scholes 評價'];
+    }
+    if (w.fair_price !== null && w.fair_price <= 0) {
+      return ['極價外', '用同類合理 BIV 算出的合理價趨近 0；委買價卡在最小跳動單位，偏離% 沒有意義'];
+    }
+    return ['資料不足', '缺少計算合理價所需的資料'];
   }
 
   function fmtDays(days) {
@@ -730,8 +744,9 @@
         av = order[av] ?? 9; bv = order[bv] ?? 9;
         if (av === bv) return recommendCompare(a, b);
       }
-      if (av === null || av === undefined) av = sortDir === 'asc' ? Infinity : -Infinity;
-      if (bv === null || bv === undefined) bv = sortDir === 'asc' ? Infinity : -Infinity;
+      // 空值不論升冪降冪都排最後
+      const an = av === null || av === undefined, bn = bv === null || bv === undefined;
+      if (an || bn) return an === bn ? 0 : (an ? 1 : -1);
       if (typeof av === 'string') {
         return sortDir === 'asc' ? String(av).localeCompare(bv) : String(bv).localeCompare(av);
       }
@@ -825,6 +840,8 @@
     const typeTagClass = w.type === 'call' ? 'type-call' : 'type-put';
     const labelClass = `label-${w.label}`;
     let fairLine = '';
+    let labelText = labelZh(w.label), labelTitle = '';
+    if (w.label === 'unknown') [labelText, labelTitle] = unknownReason(w);
     if ((w.label === 'expensive' || w.label === 'cheap') && w.fair_price !== null) {
       fairLine = `<div class="fair-price-line">合理價 ${fmtNum(w.fair_price, 3)}</div>`;
     }
@@ -852,7 +869,7 @@
       <td${w.decay_pct > DECAY_DANGER_PCT ? ' class="decay-danger"' : ''}>${w.decay_pct == null ? '—' : fmtNum(w.decay_pct, 2) + '%'}</td>
       <td>${fmtPct(w.deviation_pct, true)}</td>
       <td>
-        <span class="label-badge ${labelClass}">${labelZh(w.label)}</span>
+        <span class="label-badge ${labelClass}"${labelTitle ? ` title="${escapeHtml(labelTitle)}"` : ''}>${labelText}</span>
         ${fairLine}
       </td>
     </tr>`;

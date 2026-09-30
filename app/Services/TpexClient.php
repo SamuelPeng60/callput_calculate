@@ -11,7 +11,8 @@ use RuntimeException;
  * - 上櫃每日收盤行情 (stk_wn1430, se=AL 全部證券，可指定日期):
  *     收盤、最後買價/賣價、成交股數；但沒有標的代號
  * - OpenAPI tpex_warrant_daily_quts (最新一天):
- *     權證代號 -> 標的代號/名稱 的對照 (標的不會變，所以用最新一天的就好)
+ *     權證代號 -> 標的代號/名稱 的對照。每天存一份，查詢時合併所有存過的，
+ *     這樣查過去的日期時，之後才下市的權證也對得到標的 (權證的標的不會變)
  * - OpenAPI mopsfin_t187ap37_O (上櫃權證基本資料彙總表，格式同 TWSE t187ap37_L):
  *     履約價、行使比例、到期日
  *
@@ -109,16 +110,25 @@ class TpexClient
         return $result;
     }
 
-    /** 權證代號 -> [id => 標的代號, name => 標的名稱] (每天快取一次) */
+    /**
+     * 權證代號 -> [id => 標的代號, name => 標的名稱]
+     * 今天的對照每天抓一次，再合併之前每天存下來的 (新的蓋舊的)
+     */
     private function underlyingMap(): array
     {
-        $rows = json_decode(MarketData::cachedGet('tpex_warrant_daily_quts_' . date('Ymd') . '.json', self::UNDERLYING_URL, 120), true);
-        if (!is_array($rows)) {
-            throw new RuntimeException('TPEx 權證標的對照格式錯誤');
-        }
+        MarketData::cachedGet('tpex_warrant_daily_quts_' . date('Ymd') . '.json', self::UNDERLYING_URL, 120);
+
+        $files = glob(MarketData::cacheDir() . '/tpex_warrant_daily_quts_*.json');
+        sort($files); // 檔名帶 Ymd，排序後由舊到新
         $map = [];
-        foreach ($rows as $r) {
-            $map[trim($r['Code'])] = ['id' => trim($r['UnderlyingStockCode']), 'name' => trim($r['UnderlyingStock'])];
+        foreach ($files as $file) {
+            $rows = json_decode(file_get_contents($file), true);
+            if (!is_array($rows)) {
+                throw new RuntimeException('TPEx 權證標的對照格式錯誤 (' . basename($file) . ')');
+            }
+            foreach ($rows as $r) {
+                $map[trim($r['Code'])] = ['id' => trim($r['UnderlyingStockCode']), 'name' => trim($r['UnderlyingStock'])];
+            }
         }
         return $map;
     }

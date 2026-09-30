@@ -93,7 +93,7 @@ class BlackScholes
     }
 
     /**
-     * Delta (對標的價格的敏感度，未乘行使比例；乘上行使比例後才是每張權證的實際delta)
+     * Delta (對標的價格的敏感度，已乘行使比例 = 每單位權證的實際 delta)
      */
     public static function delta(string $type, float $S, float $K, float $T, float $r, float $q, float $sigma, float $exerciseRatio): float
     {
@@ -109,7 +109,10 @@ class BlackScholes
     }
 
     /**
-     * Theta (時間價值每日衰減，負值代表每天損失多少價值；已換算成"每一天"而非"每一年")
+     * Theta (時間價值衰減，負值代表損失多少價值；已乘行使比例，換算成"每個交易日")
+     *
+     * T 用日曆天年化，年化 theta 除以一年的交易日數 = 平均每個交易日的衰減
+     * (週末兩天的衰減攤進交易日裡，約為每日曆天的 365/240 倍)
      */
     public static function theta(string $type, float $S, float $K, float $T, float $r, float $q, float $sigma, float $exerciseRatio, int $tradingDaysPerYear = 240): float
     {
@@ -131,7 +134,7 @@ class BlackScholes
             $thetaPerYear = $term1 + $term2 + $term3;
         }
 
-        // 換算成日 theta (以年化交易日數換算)
+        // 換算成每交易日 theta
         return ($thetaPerYear / $tradingDaysPerYear) * $exerciseRatio;
     }
 

@@ -11,6 +11,7 @@ namespace App\Services;
  *    (peer group)，取該組 BIV 的中位數作為「合理 BIV」
  *    -> 這正是統一權證部落格〈隱含波動率到底用來幹嘛的?〉的方法:
  *       「同標的...剩餘天數、價外程度以及行使比例相仿」的權證互比隱波
+ *    行使比例不列入分組：反解 BIV 時已先把價格除以行使比例，BIV 本身和行使比例無關
  * 3. 用合理 BIV 代回 Black-Scholes 反算出「合理(委買)價」
  * 4. 實際委買價 vs 合理價的偏離幅度超過門檻 -> 標示 偏貴 / 便宜，否則 合理
  *
@@ -23,7 +24,7 @@ class WarrantValuationService
         private float $dividendYield = 0.0,
         private float $labelThresholdPct = 0.15,
         private int $tradingDaysPerYear = 240,
-        private int $minPeerGroupSize = 3
+        private int $minPeerGroupSize = 5 // 樣本太少時中位數容易被單一極端值帶偏
     ) {
     }
 
@@ -115,9 +116,14 @@ class WarrantValuationService
             ];
         }
 
-        // 全標的(不分組)中位數，當作 fallback (peer group 樣本太少時用)
-        $allBivs = array_values(array_filter(array_column($enriched, 'biv'), fn($v) => $v !== null));
-        $overallMedianBiv = $this->median($allBivs);
+        // 同認購/認售、不分價內外與天數的中位數，當作 fallback (peer group 樣本太少時用)
+        $bivsByType = [];
+        foreach ($enriched as $row) {
+            if ($row['biv'] !== null) {
+                $bivsByType[$row['type']][] = $row['biv'];
+            }
+        }
+        $typeMedianBiv = array_map(fn ($bivs) => $this->median($bivs), $bivsByType);
 
         // 第三步：算合理BIV、合理價、偏離幅度、標籤
         $results = [];
@@ -129,9 +135,9 @@ class WarrantValuationService
             if ($group !== null && $group['count'] >= $this->minPeerGroupSize) {
                 $fairBiv = $group['median'];
                 $fairBivSource = 'peer_group';
-            } elseif ($overallMedianBiv !== null) {
-                $fairBiv = $overallMedianBiv;
-                $fairBivSource = 'overall_median';
+            } elseif (isset($typeMedianBiv[$row['type']])) {
+                $fairBiv = $typeMedianBiv[$row['type']];
+                $fairBivSource = 'type_median';
             } elseif ($hv !== null) {
                 $fairBiv = $hv;
                 $fairBivSource = 'historical_volatility';
