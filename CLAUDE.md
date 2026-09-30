@@ -33,6 +33,12 @@ $PHPX console.php sync-real 2330 [Y-m-d]   # 手動同步真實資料
   完成後跳「更新完成」並刷新一次。
 - 權證條件來源只有「最新一天」，所以每天存精簡快照 `storage/cache/*_terms_Ymd.json`；
   每筆 `warrant_quotes` 記下當天用的履約價/行使比例，計算與 API 以它為準。
+- **兩段式同步**：今天的條件檔還沒下載時，`SyncJob` 先用最近一份舊快照算完 (state=`refreshing`，
+  網頁可先顯示)，同一個子程序再下載最新條件重算 (state=`done`)。`MarketData::$staleTerms` 記錄用了哪份舊快照。
+  下載條件檔用檔案鎖 (`*.lock`)，多檔股票同時查也只下載一次。
+- FinMind 日線本機已有就只補最後一筆之後的 (`PriceSnapshot::finMindRange()`，只看有 open 的列)。
+- `/api/warrants?limit=200`：前端預設只抓成交量前 200 檔 (回 `count`/`total`)，「顯示所有權證」才抓全部。
+- `POST /api/refresh`：強制重新確認最近交易日 (`latestTradeDate(fresh: true)`) 並在背景重跑同步。
 
 ## 資料源的坑
 
@@ -54,6 +60,7 @@ $PHPX console.php sync-real 2330 [Y-m-d]   # 手動同步真實資料
 
 ## 慣例
 
+- CLAUDE.md 有進 repo，專案知識有變就一起更新、commit。
 - 程式註解、使用者訊息、README 用繁體中文；commit message 用英文 (一行標題 + 條列)，直接 commit 在 `main`。
 - 檔案是 CRLF (git autocrlf)；用 sed 改檔時 `$` 錨點會對不上 `\r`，多行修改用 Edit 或 Python。
 - 前端篩選/排序規則：預設依標籤 (合理→便宜→偏貴)，同標籤成交量大的在前；
